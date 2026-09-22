@@ -31,11 +31,11 @@ class ScenarioManager(EnvironmentInterface):
     def set_wind(self, wind: Wind):
         self.scenario.wind = wind
 
-    def add_delivery_point(self, delivery: DeliveryPoint):
-        self.scenario.delivery_points.append(delivery)
+    def add_delivery_point(self, delivery: DeliveryOrder):
+        self.scenario.orders.append(delivery)
 
-    def remove_delivery_point(self, delivery: DeliveryPoint):
-        self.scenario.delivery_points.remove(delivery)
+    def remove_delivery_point(self, delivery: DeliveryOrder):
+        self.scenario.orders.remove(delivery)
 
     # ------------------------------------------------------------------
     # Persistence: lets students save/share hand-built scenarios as JSON.
@@ -58,9 +58,9 @@ class ScenarioManager(EnvironmentInterface):
                 for o in raw["obstacles"]
             ],
             wind=Wind(Vector3(**raw["wind"]["velocity"])),
-            delivery_points=[
-                DeliveryPoint(d["id"], Vector3(**d["position"]), d["priority"])
-                for d in raw["delivery_points"]
+            orders=[
+                DeliveryOrder(id=d["id"], destination=Vector3(**d["position"]), priority=d["priority"], payload_weight=d["payload_weight"])
+                for d in raw["orders"]
             ],
             base=Vector3(**raw["base"]),
             drone_start_battery=raw["drone_start_battery"],

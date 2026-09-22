@@ -27,15 +27,27 @@ class MissionManager:
         ]
         self.environment = environment
         self.planner = planner
-        self.orders: list[DeliveryOrder] = []
+        # self.orders: list[DeliveryOrder] = []
 
     @property
     def vehicles(self) -> list[VehicleInterface]:
         return [m.vehicle for m in self.missions]
 
+    @property
+    def orders(self) -> list[DeliveryOrder]:
+        """Dynamically exposes all orders from the active scenario."""
+        return self.environment.get_scenario().orders
+
+    @property
+    def pending_orders(self) -> list[DeliveryOrder]:
+        """Filter strictly for pending orders that haven't been dispatched yet."""
+        return sorted(
+            [o for o in self.orders if o.status == "pending"],
+            key=lambda x: -x.priority
+        )
+    
     def add_order(self, order: DeliveryOrder):
-        self.orders.append(order)
-        self.orders.sort(key=lambda x: -x.priority)
+        self.environment.get_scenario().orders.append(order)
 
     # ------------------------------------------------------------------
     # Mission lookup helpers
@@ -62,7 +74,7 @@ class MissionManager:
 
     def plan_next_mission(self, mission_id: str | None = None) -> Route | None:
         mission = self._mission_by_id(mission_id) or self._first_idle_mission()
-        if mission is None or not self.orders:
+        if mission is None or not self.pending_orders:
             return None
 
         vehicle_state = mission.vehicle.get_state()
@@ -70,23 +82,23 @@ class MissionManager:
         mission.state = MissionState.PLANNING
 
         batch, route = self.planner.plan_delivery_batch(
-            vehicle_state, self.orders, scenario.base
+            vehicle_state, self.pending_orders, scenario.base
         )
 
         if not batch:
             mission.state = MissionState.FAILED
             return None
 
+        # Mark all batch orders as DISPATCHED so no other drone targets them
         for order in batch:
-            self.orders.remove(order)
-            order.status = "assigned"
+            order.status = "dispatched"
 
         mission.active_orders = batch
         mission.active_route = route
         mission.vehicle.upload_route(route)
         mission.state = MissionState.READY
         return route
-
+    
     def start_next_mission(self, mission_id: str | None = None) -> bool:
         mission = self._mission_by_id(mission_id) or self._first_in_state(MissionState.READY)
 
@@ -104,8 +116,30 @@ class MissionManager:
         return True
 
     def update(self):
+        # 1. Process active missions
         for mission in self.missions:
             self._update_mission(mission)
+
+        # 2. Recharging logic for idle/base drones
+        for mission in self.missions:
+            state = mission.vehicle.get_state()
+            if mission.state in (MissionState.IDLE, MissionState.COMPLETE):
+                if state.battery_percent < 30.0:  # Threshold to trigger recharge
+                    mission.state = MissionState.RECHARGING
+
+            elif mission.state == MissionState.RECHARGING:
+                # Simulating recharge rate at base
+                state.battery_percent = min(100.0, state.battery_percent + 15.0 * 0.1)
+                if state.battery_percent >= 100.0:
+                    mission.state = MissionState.IDLE
+
+        # 3. Continuous Auto-Dispatch: assign pending orders to healthy idle drones
+        if self.pending_orders:
+            for mission in self.missions:
+                if mission.state == MissionState.IDLE:
+                    self.plan_next_mission(mission.id)
+                    if mission.state == MissionState.READY:
+                        self.start_next_mission(mission.id)
 
     def _update_mission(self, mission: DroneMission):
         state = mission.vehicle.get_state()
@@ -115,60 +149,70 @@ class MissionManager:
             return
 
         if mission.state == MissionState.EXECUTING:
-            if state.battery_percent < 20:
-                self.return_to_base(mission.id)
+            # Check battery emergency threshold
+            if state.battery_percent < 15:
+                self.abort_mission(mission.id)
                 return
 
+            # Check drop-offs for orders in the active batch
             for order in mission.active_orders:
-                if (
-                    order.status == "in_progress"
-                    and state.position.distance_to(order.destination) < 2.0
-                ):
-                    order.status = "delivered"
+                if order.status in ("dispatched", "in_progress"):
+                    dist = state.position.distance_to(order.destination)
+                    
+                    # Mark in-progress when drone is closing in
+                    if dist < 10.0 and order.status == "dispatched":
+                        order.status = "in_progress"
 
-            if mission.active_orders and all(
-                o.status == "delivered" for o in mission.active_orders
-            ):
-                mission.vehicle.return_to_base()
-                mission.state = MissionState.RETURNING
+                    # Mark delivered when within drop range
+                    if dist < 2.5:
+                        order.status = "delivered"
 
-        elif mission.state == MissionState.RETURNING:
-            base = self.environment.get_scenario().base
+            # Check if all orders in batch are delivered
+            if mission.active_orders and all(o.status == "delivered" for o in mission.active_orders):
+                scenario_base = self.environment.get_scenario().base
+                if state.position.distance_to(scenario_base) < 2.0:
+                    self.complete_mission(mission.id)
 
-            if (
-                state.position.distance_to(base) < 0.5
-                and state.velocity.distance_to(Vector3(0, 0, 0)) < 0.5
-            ):
-                self.complete_mission(mission.id)
-
-    def complete_mission(self, mission_id: str | None = None):
-        mission = self._mission_by_id(mission_id) or self._first_in_state(MissionState.RETURNING)
-        if mission is None:
+    def complete_mission(self, mission_id: str):
+        """Clean up completed orders and reset route on mission completion."""
+        mission = self._mission_by_id(mission_id)
+        if not mission:
             return
 
+        scenario = self.environment.get_scenario()
+        
+        # Remove completed orders permanently from the map/scenario
+        scenario.orders = [
+            o for o in scenario.orders if o.status != "delivered"
+        ]
+
         mission.active_orders = []
-        mission.active_route = None
+        mission.active_route = None  # Removes flight path from map
         mission.state = MissionState.COMPLETE
 
-    def abort_mission(self, mission_id: str | None = None):
-        mission = self._mission_by_id(mission_id) or self._first_in_state(MissionState.EXECUTING)
-        if mission is None:
+    def abort_mission(self, mission_id: str):
+        """Aborts mission, purges delivered parts, and requeues remaining orders."""
+        mission = self._mission_by_id(mission_id)
+        if not mission:
             return
 
+        scenario = self.environment.get_scenario()
+
+        # Remove orders that were successfully delivered before the abort happened
+        scenario.orders = [
+            o for o in scenario.orders if o.status != "delivered"
+        ]
+
         mission.vehicle.abort_mission()
+        mission.state = MissionState.FAILED
 
-        requeued = False
+        # Requeue remaining undelivered orders back to 'pending'
         for order in mission.active_orders:
-            if order.status != "delivered":
+            if order.status in ("dispatched", "in_progress"):
                 order.status = "pending"
-                self.orders.append(order)
-                requeued = True
-
-        if requeued:
-            self.orders.sort(key=lambda x: -x.priority)
 
         mission.active_orders = []
-        mission.state = MissionState.ABORTED
+        mission.active_route = None  # Removes aborted route path from map
 
     def return_to_base(self, mission_id: str | None = None):
         mission = self._mission_by_id(mission_id) or self._first_in_state(MissionState.EXECUTING)

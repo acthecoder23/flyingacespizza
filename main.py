@@ -64,10 +64,10 @@ def build_application():
             Obstacle(Vector3(15, 10, 0), 4, 4, 5),
             Obstacle(Vector3(25, 20, 0), 3, 6, 4),
         ],
-        delivery_points=[
-            DeliveryPoint("pizza-1", Vector3(35, 25, 2)),
-            DeliveryPoint("pizza-2", Vector3(32, 8, 2)),
-            DeliveryPoint("pizza-3", Vector3(20, 27, 2)),
+        orders=[
+            DeliveryOrder(id="order-001", destination=Vector3(35, 25, 2), priority=1, payload_weight=1.2),
+            DeliveryOrder(id="order-002", destination=Vector3(32, 8, 2), priority=1, payload_weight=1.0),
+            DeliveryOrder(id="order-003", destination=Vector3(20, 27, 2), priority=2, payload_weight=1.5),
         ],
     )
 

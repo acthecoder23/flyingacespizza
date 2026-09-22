@@ -338,62 +338,49 @@ class MissionPlanner:
 
         return total
 
+    # mission_planner.py
+
     def plan_delivery_batch(
         self,
         vehicle_state: VehicleState,
         candidate_orders: list[DeliveryOrder],
         base: Vector3,
     ) -> tuple[list[DeliveryOrder], Optional[Route]]:
-        """
-        Greedily assembles the largest batch of deliveries a single drone can carry
-        out in one trip: respects payload_capacity, and only accepts an order if the
-        resulting route (through all batched stops and back to base) still fits
-        within the battery-energy budget.
-
-        This is a simple, explainable heuristic (priority + nearest-neighbor +
-        incremental feasibility check), not an optimal solver -- a reasonable
-        starting point for students to improve on (e.g. swap in a real VRP solver).
-        """
         capacity = vehicle_state.payload_capacity
         remaining = sorted(candidate_orders, key=lambda o: -o.priority)
 
         batch: list[DeliveryOrder] = []
         total_weight = 0.0
 
-        while remaining:
-            position = batch[-1].destination if batch else vehicle_state.position
-
-            feasible_by_weight = [
-                o for o in remaining if total_weight + o.payload_weight <= capacity
-            ]
-            if not feasible_by_weight:
-                break
-
-            candidate = min(
-                feasible_by_weight,
-                key=lambda o: position.distance_to(o.destination),
-            )
+        for candidate in list(remaining):
+            if total_weight + candidate.payload_weight > capacity:
+                continue
 
             trial_batch = batch + [candidate]
             stops_with_weights = self._stops_with_remaining_weight(trial_batch, base)
-            energy = self.estimate_multi_stop_energy(
-                vehicle_state.position, stops_with_weights
-            )
-
-            if energy > vehicle_state.battery_percent * self.battery_reserve_margin:
-                remaining.remove(candidate)
+            
+            try:
+                energy = self.estimate_multi_stop_energy(
+                    vehicle_state.position, stops_with_weights
+                )
+            except RuntimeError:
+                # Target is enclosed/unreachable by pathfinder; skip candidate
                 continue
 
-            batch = trial_batch
-            total_weight += candidate.payload_weight
-            remaining.remove(candidate)
+            if energy <= vehicle_state.battery_percent * self.battery_reserve_margin:
+                batch.append(candidate)
+                total_weight += candidate.payload_weight
 
         if not batch:
             return [], None
 
-        stops = [order.destination for order in batch] + [base]
-        route = self.plan_multi_stop_route(vehicle_state.position, stops)
-        return batch, route
+        try:
+            stops = [order.destination for order in batch] + [base]
+            route = self.plan_multi_stop_route(vehicle_state.position, stops)
+            return batch, route
+        except RuntimeError:
+            # Fallback if final full route assembly fails
+            return [], None
 
     @staticmethod
     def _stops_with_remaining_weight(

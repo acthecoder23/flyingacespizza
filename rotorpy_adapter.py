@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+# rotorpy_adapter.py
+
+from rotorpy.trajectories.minsnap import MinSnap
+from rotorpy.trajectories.hover_traj import HoverTraj
 
 from contracts import *
 
@@ -123,30 +127,12 @@ class RotorPyVehicleAdapter(VehicleInterface):
     def abort_mission(self) -> None:
         self._state.state = DroneState.EMERGENCY
 
-    def return_to_base(self) -> None:
-        if self._battery <= 0.0:
-            self._state.state = DroneState.EMERGENCY
-            self._state.fault = "Battery depleted"
-            return
-
-        current = self._state.position
-
-        route = Route([
-            Waypoint(Vector3(
-                current.x,
-                current.y,
-                current.z,
-            )),
-            Waypoint(Vector3(
-                self.home_position.x,
-                self.home_position.y,
-                self.home_position.z,
-            )),
-        ])
-
-        self.upload_route(route)
+    def return_to_base(self, base_position: Vector3 = None) -> None:
+        target = base_position if base_position else self.home_position
+        # Upload a direct route back to the base coordinate
+        return_route = Route([Waypoint(self._state.position), Waypoint(target)])
+        self.upload_route(return_route)
         self.start_mission()
-        self._state.state = DroneState.RETURNING
 
     def advance(self, dt: float) -> None:
         if dt <= 0:
@@ -242,31 +228,38 @@ class RotorPyVehicleAdapter(VehicleInterface):
         }
 
     def _build_trajectory(self, route: Route):
-        from rotorpy.trajectories.minsnap import MinSnap
+        if not route or len(route.waypoints) < 2:
+            return HoverTraj(x0=self._home_position)
 
-        points = np.asarray(
-            [
-                [
-                    waypoint.position.x,
-                    waypoint.position.y,
-                    waypoint.position.z,
-                ]
-                for waypoint in route.waypoints
-            ],
-            dtype=float,
-        )
+        # 1. Filter out duplicate or near-identical consecutive waypoints
+        filtered_points = []
+        min_dist_threshold = 0.5  # meters
 
-        if len(points) == 1:
-            from rotorpy.trajectories.hover_traj import HoverTraj
+        for wp in route.waypoints:
+            pos = np.array([wp.position.x, wp.position.y, wp.position.z])
+            if not filtered_points:
+                filtered_points.append(pos)
+            else:
+                if np.linalg.norm(pos - filtered_points[-1]) >= min_dist_threshold:
+                    filtered_points.append(pos)
 
-            return HoverTraj(x0=points[0])
+        # Need at least 2 distinct points for MinSnap
+        if len(filtered_points) < 2:
+            return HoverTraj(x0=self._home_position)
 
-        return MinSnap(
-            points,
-            v_max=3.0,
-            v_avg=1.0,
-            verbose=False,
-        )
+        points = np.array(filtered_points)
+
+        # 2. Call MinSnap with non-collinear waypoints
+        try:
+            return MinSnap(
+                points=points,
+                v_avg=2.0,
+                verbose=False,
+            )
+        except Exception:
+            # Fallback to hovering at the target destination if QP optimization fails
+            target = points[-1]
+            return HoverTraj(x0=target)
 
     def _advance_rotorpy(self, dt: float) -> None:
         if self._rotorpy_state is None:

@@ -4,8 +4,9 @@ import math
 import pygame
 
 from camera import Camera
-from contracts import Vector3
+from contracts import MissionState, Vector3
 from editor import ScenarioEditor
+from order_spawner import OrderSpawner
 
 BG = (240, 240, 240)
 GRID = (215, 215, 215)
@@ -15,9 +16,10 @@ PANEL_BORDER = (190, 190, 190)
 
 MODE_COLORS = {"edit": (180, 60, 60), "sim": (40, 120, 60)}
 STATUS_COLORS = {
-    "pending": (200, 100, 0),
-    "in_progress": (0, 100, 200),
-    "delivered": (0, 150, 0),
+    "pending": (220, 50, 50),     # Red: waiting in queue
+    "dispatched": (230, 180, 0),  # Yellow: assigned to a drone
+    "in_progress": (50, 150, 250),# Blue: drone currently delivering
+    "delivered": (50, 200, 50),   # Green: successfully delivered
 }
 
 DRONE_COLORS = [
@@ -41,6 +43,7 @@ class PygameUI:
         self.scenario_manager = scenario_manager
         self.mission_manager = mission_manager
         self.simulation = simulation
+        self.spawner = OrderSpawner(interval_seconds=15.0)
 
         self.camera = Camera()
         self.camera.fit(scenario_manager.get_scenario().bounds, self.screen_size)
@@ -163,7 +166,8 @@ class PygameUI:
     def update(self, dt):
         if self.mode == "sim":
             self.simulation.advance(dt)
-            self.mission_manager.update()
+            self.spawner.update(dt, self.scenario_manager.get_scenario())  # Spawns orders
+            self.mission_manager.update()  # Auto-dispatches available drones
 
     # ------------------------------------------------------------------
     # Rendering
@@ -221,12 +225,12 @@ class PygameUI:
             self.screen.blit(label, (top_left[0] + 4, top_left[1] + 4))
 
     def render_deliveries(self):
-        for delivery in self.scenario_manager.get_scenario().delivery_points:
-            x, y = self.camera.world_to_screen(delivery.position)
-            color = STATUS_COLORS.get(getattr(delivery, "status", "pending"), (200, 100, 0))
+        for order in self.scenario_manager.get_scenario().orders:
+            x, y = self.camera.world_to_screen(order.destination)
+            color = STATUS_COLORS.get(order.status, (150, 150, 150))
             pygame.draw.circle(self.screen, color, (x, y), 7)
             pygame.draw.circle(self.screen, (0, 0, 0), (x, y), 7, 1)
-            label = self.small_font.render(delivery.id, True, TEXT)
+            label = self.small_font.render(f"{order.id} [{order.status}]", True, TEXT)
             self.screen.blit(label, (x + 8, y - 8))
 
     def render_base(self):
@@ -278,17 +282,34 @@ class PygameUI:
         elif self.editor.tool == "wind":
             pygame.draw.line(self.screen, (30, 100, 200), start, end, 2)
 
+    # def render_route(self):
+    #     for i, mission in enumerate(self.mission_manager.missions):
+    #         route = mission.active_route
+    #         if route is None or len(route.waypoints) < 2:
+    #             continue
+
+    #         color = DRONE_COLORS[i % len(DRONE_COLORS)]
+    #         points = [self.camera.world_to_screen(wp.position) for wp in route.waypoints]
+    #         pygame.draw.lines(self.screen, color, False, points, 3)
+    #         for point in points:
+    #             pygame.draw.circle(self.screen, color, point, 4)
+
     def render_route(self):
         for i, mission in enumerate(self.mission_manager.missions):
-            route = mission.active_route
-            if route is None or len(route.waypoints) < 2:
-                continue
+            # Only render flight path if mission has an active route and is running
+            if (
+                mission.active_route 
+                and mission.state in (MissionState.EXECUTING, MissionState.READY, MissionState.RETURNING)
+            ):
+                points = [
+                    self.camera.world_to_screen(wp.position)
+                    for wp in mission.active_route.waypoints
+                ]
+                color = DRONE_COLORS[i % len(DRONE_COLORS)]
 
-            color = DRONE_COLORS[i % len(DRONE_COLORS)]
-            points = [self.camera.world_to_screen(wp.position) for wp in route.waypoints]
-            pygame.draw.lines(self.screen, color, False, points, 3)
-            for point in points:
-                pygame.draw.circle(self.screen, color, point, 4)
+                if len(points) > 1:
+                    pygame.draw.lines(self.screen, color, False, points, 2)
+                    # pygame.draw.lines(self.screen, (0, 200, 255), False, points, 2)
 
     def render_toolbar(self):
         rect = pygame.Rect(0, 0, self.screen_size[0], 34)

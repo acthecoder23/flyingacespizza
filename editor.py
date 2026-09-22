@@ -1,7 +1,7 @@
 # editor.py
 import pygame
 
-from contracts import DeliveryPoint, Obstacle, Vector3, Wind
+from contracts import DeliveryOrder, Obstacle, Vector3, Wind
 from scenario import ScenarioManager
 
 
@@ -26,7 +26,8 @@ class ScenarioEditor:
         self.default_obstacle_height = 5.0
         self._drag_start_world = None
         self._drag_start_screen = None
-        self._next_delivery_n = len(scenario_manager.get_scenario().delivery_points) + 1
+        # Track next order index based on scenario.orders
+        self._next_delivery_n = len(scenario_manager.get_scenario().orders) + 1
 
     def cycle_tool(self):
         self.tool = self.TOOLS[(self.TOOLS.index(self.tool) + 1) % len(self.TOOLS)]
@@ -82,12 +83,15 @@ class ScenarioEditor:
         )
 
     def _add_delivery(self, position: Vector3):
-        delivery = DeliveryPoint(
+        order = DeliveryOrder(
             id=f"pizza-{self._next_delivery_n}",
-            position=Vector3(position.x, position.y, 2.0),
+            destination=Vector3(position.x, position.y, 2.0),
+            priority=1,
+            payload_weight=1.0,
         )
         self._next_delivery_n += 1
-        self.scenario_manager.add_delivery_point(delivery)
+        # Adds order directly to scenario
+        self.scenario_manager.get_scenario().orders.append(order)
 
     def _move_base(self, position: Vector3):
         scenario = self.scenario_manager.get_scenario()

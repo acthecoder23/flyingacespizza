@@ -11,6 +11,7 @@ class MissionState(Enum):
     IDLE = "idle"
     PLANNING = "planning"
     READY = "ready"
+    RECHARGING = "recharging"
     EXECUTING = "executing"
     DELIVERING = "delivering"
     RETURNING = "returning"
@@ -98,11 +99,30 @@ class Wind:
         return self.velocity.distance_to(Vector3(0, 0, 0))
 
 
+# @dataclass
+# class DeliveryPoint:
+#     id: str
+#     position: Vector3
+#     priority: int = 0
+
+
+# @dataclass
+# class Scenario:
+#     bounds: tuple[float, float, float, float]
+#     obstacles: list[Obstacle] = field(default_factory=list)
+#     wind: Wind = field(default_factory=Wind)
+#     delivery_points: list[DeliveryPoint] = field(default_factory=list)
+#     base: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
+#     drone_start_battery: float = 100.0
+# contracts.py
+
 @dataclass
-class DeliveryPoint:
+class DeliveryOrder:
     id: str
-    position: Vector3
+    destination: Vector3
     priority: int = 0
+    payload_weight: float = 1.0  # default weight for editor-placed orders
+    status: str = "pending"      # "pending", "assigned", "in_progress", "delivered"
 
 
 @dataclass
@@ -110,7 +130,7 @@ class Scenario:
     bounds: tuple[float, float, float, float]
     obstacles: list[Obstacle] = field(default_factory=list)
     wind: Wind = field(default_factory=Wind)
-    delivery_points: list[DeliveryPoint] = field(default_factory=list)
+    orders: list[DeliveryOrder] = field(default_factory=list)  # Replaces delivery_points
     base: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
     drone_start_battery: float = 100.0
 
@@ -127,13 +147,13 @@ class SimulationSnapshot:
         return self.vehicles[0] if self.vehicles else None
 
 
-@dataclass
-class DeliveryOrder:
-    id: str
-    destination: Vector3
-    priority: int = 0
-    payload_weight: float = 0.0
-    status: str = "pending"
+# @dataclass
+# class DeliveryOrder:
+#     id: str
+#     destination: Vector3
+#     priority: int = 0
+#     payload_weight: float = 0.0
+#     status: str = "pending"
 
 
 @dataclass

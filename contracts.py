@@ -25,6 +25,7 @@ class DroneState(Enum):
     FLYING = "flying"
     RETURNING = "returning"
     EMERGENCY = "emergency"
+    HOVERING = "hovering"
 
 
 @dataclass
@@ -35,6 +36,15 @@ class Vector3:
 
     def distance_to(self, other: "Vector3") -> float:
         return ((self.x - other.x) ** 2 + (self.y - other.y) ** 2 + (self.z - other.z) ** 2) ** 0.5
+
+    def __add__(self, other: "Vector3") -> "Vector3":
+        return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
+
+    def __sub__(self, other: "Vector3") -> "Vector3":
+        return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    def __mul__(self, scalar: float) -> "Vector3":
+        return Vector3(self.x * scalar, self.y * scalar, self.z * scalar)
 
 
 @dataclass

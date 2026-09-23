@@ -338,8 +338,6 @@ class MissionPlanner:
 
         return total
 
-    # mission_planner.py
-
     def plan_delivery_batch(
         self,
         vehicle_state: VehicleState,
@@ -347,12 +345,14 @@ class MissionPlanner:
         base: Vector3,
     ) -> tuple[list[DeliveryOrder], Optional[Route]]:
         capacity = vehicle_state.payload_capacity
-        remaining = sorted(candidate_orders, key=lambda o: -o.priority)
+        
+        # Sort candidates so highest priority number comes first
+        remaining = sorted(candidate_orders, key=lambda o: o.priority, reverse=True)
 
         batch: list[DeliveryOrder] = []
         total_weight = 0.0
 
-        for candidate in list(remaining):
+        for candidate in remaining:
             if total_weight + candidate.payload_weight > capacity:
                 continue
 
@@ -364,7 +364,6 @@ class MissionPlanner:
                     vehicle_state.position, stops_with_weights
                 )
             except RuntimeError:
-                # Target is enclosed/unreachable by pathfinder; skip candidate
                 continue
 
             if energy <= vehicle_state.battery_percent * self.battery_reserve_margin:
@@ -379,7 +378,6 @@ class MissionPlanner:
             route = self.plan_multi_stop_route(vehicle_state.position, stops)
             return batch, route
         except RuntimeError:
-            # Fallback if final full route assembly fails
             return [], None
 
     @staticmethod

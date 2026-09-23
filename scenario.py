@@ -51,19 +51,29 @@ class ScenarioManager(EnvironmentInterface):
     @staticmethod
     def from_json(data: str) -> "ScenarioManager":
         raw = json.loads(data)
+        
+        # Handle wind if present, or default to zero vector
+        wind_data = raw.get("wind", {}).get("velocity", {"x": 0.0, "y": 0.0, "z": 0.0})
+        
         scenario = Scenario(
             bounds=tuple(raw["bounds"]),
             obstacles=[
                 Obstacle(Vector3(**o["position"]), o["width"], o["depth"], o["height"])
-                for o in raw["obstacles"]
+                for o in raw.get("obstacles", [])
             ],
-            wind=Wind(Vector3(**raw["wind"]["velocity"])),
+            wind=Wind(Vector3(**wind_data)),
             orders=[
-                DeliveryOrder(id=d["id"], destination=Vector3(**d["position"]), priority=d["priority"], payload_weight=d["payload_weight"])
-                for d in raw["orders"]
+                DeliveryOrder(
+                    id=d["id"],
+                    destination=Vector3(**(d.get("destination") or d.get("position"))),
+                    priority=d.get("priority", 0),
+                    payload_weight=d.get("payload_weight", 1.0),
+                    status=d.get("status", "pending")
+                )
+                for d in raw.get("orders", [])
             ],
             base=Vector3(**raw["base"]),
-            drone_start_battery=raw["drone_start_battery"],
+            drone_start_battery=raw.get("drone_start_battery", 100.0),
         )
         return ScenarioManager(scenario)
 

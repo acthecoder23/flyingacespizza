@@ -1,4 +1,3 @@
-# mission_manager.py
 from contracts import *
 from mission_planner import MissionPlanner
 
@@ -27,7 +26,7 @@ class MissionManager:
         ]
         self.environment = environment
         self.planner = planner
-        # self.orders: list[DeliveryOrder] = []
+        
 
     @property
     def vehicles(self) -> list[VehicleInterface]:
@@ -43,15 +42,12 @@ class MissionManager:
         """Filter strictly for pending orders that haven't been dispatched yet."""
         return sorted(
             [o for o in self.orders if o.status == "pending"],
-            key=lambda x: -x.priority
+            key=lambda o: o.priority,
+            reverse=True,
         )
-    
+
     def add_order(self, order: DeliveryOrder):
         self.environment.get_scenario().orders.append(order)
-
-    # ------------------------------------------------------------------
-    # Mission lookup helpers
-    # ------------------------------------------------------------------
 
     def _mission_by_id(self, mission_id: str | None) -> DroneMission | None:
         if mission_id is None:
@@ -67,11 +63,6 @@ class MissionManager:
     def _first_in_state(self, state: MissionState) -> DroneMission | None:
         return next((m for m in self.missions if m.state == state), None)
 
-    # ------------------------------------------------------------------
-    # Mission control (mission_id optional: defaults to a sensible drone,
-    # so single-fleet callers don't need to know about fleet management)
-    # ------------------------------------------------------------------
-
     def plan_next_mission(self, mission_id: str | None = None) -> Route | None:
         mission = self._mission_by_id(mission_id) or self._first_idle_mission()
         if mission is None or not self.pending_orders:
@@ -85,11 +76,11 @@ class MissionManager:
             vehicle_state, self.pending_orders, scenario.base
         )
 
-        if not batch:
-            mission.state = MissionState.FAILED
+        if not batch or route is None:
+            # Revert to IDLE instead of persistent FAILED state so drone can attempt later
+            mission.state = MissionState.IDLE
             return None
 
-        # Mark all batch orders as DISPATCHED so no other drone targets them
         for order in batch:
             order.status = "dispatched"
 
@@ -98,7 +89,7 @@ class MissionManager:
         mission.vehicle.upload_route(route)
         mission.state = MissionState.READY
         return route
-    
+
     def start_next_mission(self, mission_id: str | None = None) -> bool:
         mission = self._mission_by_id(mission_id) or self._first_in_state(MissionState.READY)
 
@@ -115,31 +106,101 @@ class MissionManager:
         mission.state = MissionState.EXECUTING
         return True
 
-    def update(self):
-        # 1. Process active missions
+    # def update(self, dt: float = 0.1):
+    #     scenario_base = self.environment.get_scenario().base
+
+    #     # 1. Update active flight states & delivery progress
+    #     for mission in self.missions:
+    #         self._update_mission(mission)
+
+    #     # 2. Recharging logic
+    #     for mission in self.missions:
+    #         v_state = mission.vehicle.get_state()
+    #         at_base = v_state.position.distance_to(scenario_base) <= 2.5
+
+    #         if mission.state in (MissionState.IDLE, MissionState.COMPLETE):
+    #             if v_state.battery_percent < 30.0 and at_base:
+    #                 mission.state = MissionState.RECHARGING
+
+    #         elif mission.state == MissionState.RECHARGING:
+    #             if not at_base:
+    #                 mission.state = MissionState.IDLE
+    #                 continue
+
+    #             # Scale battery charge rate (+15% / second)
+    #             new_battery = min(100.0, v_state.battery_percent + 15.0 * dt)
+                
+    #             # Directly write to vehicle adapter
+    #             if hasattr(mission.vehicle, "set_battery"):
+    #                 mission.vehicle.set_battery(new_battery)
+    #             else:
+    #                 v_state.battery_percent = new_battery
+
+    #             if new_battery >= 99.9:
+    #                 mission.state = MissionState.IDLE
+
+    #     # 3. Auto-Dispatch & Auto-Start Mission
+    #     if self.pending_orders:
+    #         for mission in self.missions:
+    #             v_state = mission.vehicle.get_state()
+    #             at_base = v_state.position.distance_to(scenario_base) <= 2.5
+                
+    #             if mission.state == MissionState.IDLE and v_state.battery_percent >= 30.0 and at_base:
+    #                 route = self.plan_next_mission(mission.id)
+    #                 if route and mission.state == MissionState.READY:
+    #                     # AUTO-START mission instantly without manual intervention
+    #                     self.start_next_mission(mission.id)
+    def update(self, dt: float = 0.1):
+        scenario_base = self.environment.get_scenario().base
+
+        # 1. Update active flight states & delivery progress
         for mission in self.missions:
             self._update_mission(mission)
 
-        # 2. Recharging logic for idle/base drones
+        # 2. Base Recharging logic
         for mission in self.missions:
-            state = mission.vehicle.get_state()
+            v_state = mission.vehicle.get_state()
+            at_base = v_state.position.distance_to(scenario_base) <= 2.5
+
             if mission.state in (MissionState.IDLE, MissionState.COMPLETE):
-                if state.battery_percent < 30.0:  # Threshold to trigger recharge
+                if v_state.battery_percent < 30.0 and at_base:
                     mission.state = MissionState.RECHARGING
 
             elif mission.state == MissionState.RECHARGING:
-                # Simulating recharge rate at base
-                state.battery_percent = min(100.0, state.battery_percent + 15.0 * 0.1)
-                if state.battery_percent >= 100.0:
+                if not at_base:
+                    mission.state = MissionState.IDLE
+                    continue
+
+                new_battery = min(100.0, v_state.battery_percent + 15.0 * dt)
+                if hasattr(mission.vehicle, "set_battery"):
+                    mission.vehicle.set_battery(new_battery)
+                else:
+                    v_state.battery_percent = new_battery
+
+                if new_battery >= 99.9:
                     mission.state = MissionState.IDLE
 
-        # 3. Continuous Auto-Dispatch: assign pending orders to healthy idle drones
+        # 3. Robust Auto-Dispatch
         if self.pending_orders:
             for mission in self.missions:
-                if mission.state == MissionState.IDLE:
-                    self.plan_next_mission(mission.id)
-                    if mission.state == MissionState.READY:
+                v_state = mission.vehicle.get_state()
+                at_base = v_state.position.distance_to(scenario_base) <= 2.5
+
+                if mission.state == MissionState.IDLE and v_state.battery_percent >= 30.0 and at_base:
+                    # Attempt to plan mission
+                    route = self.plan_next_mission(mission.id)
+
+                    if route and mission.state == MissionState.READY:
+                        # Success: Auto-start mission
                         self.start_next_mission(mission.id)
+                    elif route is None:
+                        # Routing failed: Identify current order & handle failure
+                        if mission.active_orders:
+                            failed_order = mission.active_orders[0]
+                            failed_order.status = "unfeasible"
+                            print(f"[MissionManager] Unfeasible route for order {failed_order.id}. Skipping.")
+                            mission.active_orders.clear()
+                            mission.state = MissionState.IDLE
 
     def _update_mission(self, mission: DroneMission):
         state = mission.vehicle.get_state()
@@ -148,71 +209,57 @@ class MissionManager:
             self.abort_mission(mission.id)
             return
 
-        if mission.state == MissionState.EXECUTING:
-            # Check battery emergency threshold
-            if state.battery_percent < 15:
+        if mission.state in (MissionState.EXECUTING, MissionState.RETURNING):
+            if state.battery_percent < 15.0:
                 self.abort_mission(mission.id)
                 return
 
-            # Check drop-offs for orders in the active batch
+            # Check order drop-offs
             for order in mission.active_orders:
                 if order.status in ("dispatched", "in_progress"):
                     dist = state.position.distance_to(order.destination)
-                    
-                    # Mark in-progress when drone is closing in
                     if dist < 10.0 and order.status == "dispatched":
                         order.status = "in_progress"
-
-                    # Mark delivered when within drop range
                     if dist < 2.5:
                         order.status = "delivered"
 
-            # Check if all orders in batch are delivered
+            # Auto Return-to-Base after deliveries
             if mission.active_orders and all(o.status == "delivered" for o in mission.active_orders):
                 scenario_base = self.environment.get_scenario().base
-                if state.position.distance_to(scenario_base) < 2.0:
+                if mission.state != MissionState.RETURNING:
+                    self.return_to_base(mission.id)
+                elif state.position.distance_to(scenario_base) < 2.5:
                     self.complete_mission(mission.id)
 
     def complete_mission(self, mission_id: str):
-        """Clean up completed orders and reset route on mission completion."""
         mission = self._mission_by_id(mission_id)
         if not mission:
             return
 
         scenario = self.environment.get_scenario()
-        
-        # Remove completed orders permanently from the map/scenario
-        scenario.orders = [
-            o for o in scenario.orders if o.status != "delivered"
-        ]
+        scenario.orders = [o for o in scenario.orders if o.status != "delivered"]
 
         mission.active_orders = []
-        mission.active_route = None  # Removes flight path from map
+        mission.active_route = None
         mission.state = MissionState.COMPLETE
 
-    def abort_mission(self, mission_id: str):
-        """Aborts mission, purges delivered parts, and requeues remaining orders."""
-        mission = self._mission_by_id(mission_id)
+    def abort_mission(self, mission_id: str | None = None):
+        mission = self._mission_by_id(mission_id) or self.missions[0]
         if not mission:
             return
 
         scenario = self.environment.get_scenario()
-
-        # Remove orders that were successfully delivered before the abort happened
-        scenario.orders = [
-            o for o in scenario.orders if o.status != "delivered"
-        ]
+        scenario.orders = [o for o in scenario.orders if o.status != "delivered"]
 
         mission.vehicle.abort_mission()
         mission.state = MissionState.FAILED
 
-        # Requeue remaining undelivered orders back to 'pending'
         for order in mission.active_orders:
             if order.status in ("dispatched", "in_progress"):
                 order.status = "pending"
 
         mission.active_orders = []
-        mission.active_route = None  # Removes aborted route path from map
+        mission.active_route = None
 
     def return_to_base(self, mission_id: str | None = None):
         mission = self._mission_by_id(mission_id) or self._first_in_state(MissionState.EXECUTING)
@@ -227,12 +274,9 @@ class MissionManager:
             mission.active_orders = []
             mission.active_route = None
             mission.state = MissionState.IDLE
+            mission.vehicle.reset()
         for order in self.orders:
             order.status = "pending"
-
-    # ------------------------------------------------------------------
-    # Backward-compatible single-drone accessors (mission[0])
-    # ------------------------------------------------------------------
 
     @property
     def state(self) -> MissionState:

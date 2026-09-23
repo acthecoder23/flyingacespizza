@@ -4,8 +4,9 @@ import random
 from contracts import DeliveryOrder, Vector3, Scenario
 
 class OrderSpawner:
-    def __init__(self, interval_seconds: float = 30.0):
+    def __init__(self, interval_seconds: float = 30.0, max_active_orders: int = 5):
         self.interval = interval_seconds
+        self.max_active_orders = max_active_orders
         self.timer = 0.0
         self.counter = 100
 
@@ -20,7 +21,7 @@ class OrderSpawner:
 
     def update(self, dt: float, scenario: Scenario):
         self.timer += dt
-        if self.timer >= self.interval:
+        if self.timer >= self.interval and len(scenario.orders) < self.max_active_orders:
             self.timer = 0.0
             x0, y0, x1, y1 = scenario.bounds
             margin = 3.0

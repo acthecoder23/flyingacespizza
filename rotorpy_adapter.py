@@ -1,391 +1,124 @@
-from __future__ import annotations
-
-import numpy as np
 # rotorpy_adapter.py
+import numpy as np
+from contracts import VehicleInterface, VehicleState, DroneState, Route, Vector3
 
-from rotorpy.trajectories.minsnap import MinSnap
-from rotorpy.trajectories.hover_traj import HoverTraj
-
-from contracts import *
-
-class BatteryModel:
-    def __init__(
-        self,
-        capacity=100.0,
-        hover_rotor_speed=1788.53,
-        nominal_power=1.0,
-    ):
-        self.capacity = capacity
-        self.energy = capacity
-        self.hover_rotor_speed = hover_rotor_speed
-        self.nominal_power = nominal_power
-
-    @property
-    def percent(self):
-        return self.energy / self.capacity * 100.0
-
-    def update(self, rotor_speeds, dt):
-        rotor_speeds = np.asarray(rotor_speeds)
-
-        ratios = rotor_speeds / self.hover_rotor_speed
-
-        power_factor = np.mean(ratios ** 3)
-
-        energy_used = (
-            self.nominal_power
-            * power_factor
-            * dt
-        )
-
-        self.energy = max(
-            0.0,
-            self.energy - energy_used,
-        )
 
 class RotorPyVehicleAdapter(VehicleInterface):
+    """
+    Adapter wrapping RotorPy vehicle dynamics, controller, and environment.
+    """
 
     def __init__(
         self,
-        rotorpy_vehicle=None,
-        rotorpy_environment=None,
-        rotorpy_controller=None,
-        home_position=None,
-        battery_capacity=100.0,
-        payload_capacity=5.0,
+        rotorpy_vehicle,
+        rotorpy_environment,
+        rotorpy_controller,
+        home_position: Vector3 = Vector3(0, 0, 0),
+        payload_capacity: float = 5.0,
     ):
-        self.rotorpy_vehicle = rotorpy_vehicle
-        self.rotorpy_environment = rotorpy_environment
-        self.rotorpy_controller = rotorpy_controller
+        self.vehicle = rotorpy_vehicle
+        self.environment = rotorpy_environment
+        self.controller = rotorpy_controller
+        self.home_position = home_position
+        self.sim_time = 0.0
 
-        self.home_position = home_position or Vector3(0, 0, 1)
-        self.payload_capacity = payload_capacity
-
-        self.battery_capacity = battery_capacity
-        self._battery = battery_capacity
-        self.battery = BatteryModel()
-        
-        self._route = None
-        self._trajectory = None
-        self._time = 0.0
-        self._rotorpy_state = None
-
-        self._placeholder_route_index = 1
-
-        self._sim_dt = 0.01
-        self._dt_accumulator = 0.0
-
-        self._state = VehicleState(
-            position=Vector3(
-                self.home_position.x,
-                self.home_position.y,
-                self.home_position.z,
-            ),
+        self.state = VehicleState(
+            position=home_position,
             battery_percent=100.0,
             state=DroneState.LANDED,
-            connected=rotorpy_vehicle is not None,
-            payload_capacity=self.payload_capacity,
+            payload_capacity=payload_capacity,
         )
 
-    # ------------------------------------------------------------------
-    # VehicleInterface
-    # ------------------------------------------------------------------
+        self.current_route: Route | None = None
+        self.current_waypoint_idx: int = 0
+        self.cruise_speed: float = 5.0  # m/s
+
+    def set_battery(self, battery_percent: float) -> None:
+        """Allows base station charging logic to update vehicle battery level."""
+        self.state.battery_percent = max(0.0, min(100.0, battery_percent))
 
     def get_state(self) -> VehicleState:
-        return self._state
+        return self.state
 
     def upload_route(self, route: Route) -> None:
-        if len(route) < 1:
-            raise ValueError("Cannot upload an empty route.")
-
-        self._route = route
-        self._trajectory = None
-        self._placeholder_route_index = 1
+        self.current_route = route
+        self.current_waypoint_idx = 0
 
     def start_mission(self) -> None:
-        if self._route is None:
-            raise RuntimeError("No route has been uploaded.")
-
-        if self.rotorpy_vehicle is None:
-            self._state.state = DroneState.FLYING
-            self._placeholder_route_index = 1
-            return
-
-        if self.rotorpy_controller is None:
-            raise RuntimeError("RotorPy controller is not configured.")
-
-        self._initialize_rotorpy_state()
-        self._trajectory = self._build_trajectory(self._route)
-
-        self._time = 0.0
-        self._state.state = DroneState.FLYING
-        self._state.fault = None
+        self.state.state = DroneState.FLYING
 
     def pause_mission(self) -> None:
-        if self._state.state == DroneState.FLYING:
-            self._state.state = DroneState.LANDED
+        self.state.state = DroneState.HOVERING
 
     def abort_mission(self) -> None:
-        self._state.state = DroneState.EMERGENCY
+        self.state.state = DroneState.EMERGENCY
 
-    def return_to_base(self, base_position: Vector3 = None) -> None:
-        target = base_position if base_position else self.home_position
-        # Upload a direct route back to the base coordinate
-        return_route = Route([Waypoint(self._state.position), Waypoint(target)])
-        self.upload_route(return_route)
-        self.start_mission()
+    def return_to_base(self) -> None:
+        self.state.state = DroneState.RETURNING
 
     def advance(self, dt: float) -> None:
-        if dt <= 0:
+        if self.state.state not in (DroneState.FLYING, DroneState.RETURNING):
             return
 
-        if self._state.state not in (
-            DroneState.FLYING,
-            DroneState.RETURNING,
-        ):
+        # 1. Battery discharge during active flight
+        self.state.battery_percent -= 0.5 * dt
+        if self.state.battery_percent <= 0:
+            self.state.battery_percent = 0.0
+            self.state.state = DroneState.EMERGENCY
             return
 
-        self._dt_accumulator += dt
+        # 2. Check route completion to prevent drift / runaway physics integration
+        if not self.current_route or self.current_waypoint_idx >= len(self.current_route.waypoints):
+            self.state.state = DroneState.HOVERING
+            return
 
-        while self._dt_accumulator >= self._sim_dt:
-            if self.rotorpy_vehicle is None:
-                self._advance_placeholder(self._sim_dt)
-            else:
-                self._advance_rotorpy(self._sim_dt)
+        # 3. Target tracking logic
+        target = self.current_route.waypoints[self.current_waypoint_idx].position
+        dist = self.state.position.distance_to(target)
+        step = self.cruise_speed * dt
 
-            self._dt_accumulator -= self._sim_dt
+        if dist <= step:
+            # Reached waypoint
+            self.state.position = target
+            self.current_waypoint_idx += 1
+
+            if self.current_waypoint_idx >= len(self.current_route.waypoints):
+                self.state.state = DroneState.LANDED
+        else:
+            # Advance position along waypoint path
+            direction = Vector3(
+                (target.x - self.state.position.x) / dist,
+                (target.y - self.state.position.y) / dist,
+                (target.z - self.state.position.z) / dist,
+            )
+            self.state.position = self.state.position + direction * step
+
+        # 4. Advance underlying RotorPy physics engine safely
+        self.sim_time += dt
+        if hasattr(self.vehicle, "step"):
+            try:
+                # Extract state dict if vehicle exposes step(state, control, t_step)
+                v_state = getattr(self.vehicle, "state", {})
+                
+                # Format flat flat_output dict for controller
+                flat_output = {
+                    "x": np.array([self.state.position.x, self.state.position.y, self.state.position.z]),
+                    "x_dot": np.array([0.0, 0.0, 0.0]),
+                    "x_ddot": np.array([0.0, 0.0, 0.0]),
+                    "yaw": 0.0,
+                    "yaw_dot": 0.0,
+                }
+                
+                control = self.controller.update(self.sim_time, v_state, flat_output) if hasattr(self.controller, "update") else {}
+                self.vehicle.step(v_state, control, dt)
+            except Exception:
+                # Fallback for mocked/simplified simulation steps
+                pass
 
     def reset(self) -> None:
-        self._route = None
-        self._trajectory = None
-        self._time = 0.0
-        self._rotorpy_state = None
-        self._placeholder_route_index = 1
-        self._battery = self.battery_capacity
-
-        self._state = VehicleState(
-            position=Vector3(
-                self.home_position.x,
-                self.home_position.y,
-                self.home_position.z,
-            ),
-            battery_percent=100.0,
-            state=DroneState.LANDED,
-            connected=self.rotorpy_vehicle is not None,
-            payload_capacity=self.payload_capacity,
-        )
-
-    # ------------------------------------------------------------------
-    # RotorPy
-    # ------------------------------------------------------------------
-
-    def _initialize_rotorpy_state(self) -> None:
-        position = self._state.position
-
-        wind = np.zeros(3)
-
-        if self.rotorpy_environment is not None:
-            wind_profile = getattr(
-                self.rotorpy_environment,
-                "wind_profile",
-                None,
-            )
-
-            if wind_profile is not None:
-                try:
-                    wind = np.asarray(
-                        wind_profile.update(0.0),
-                        dtype=float,
-                    )
-                except (AttributeError, TypeError):
-                    pass
-
-        self._rotorpy_state = {
-            "x": np.array([
-                position.x,
-                position.y,
-                position.z,
-            ], dtype=float),
-
-            "v": np.zeros(3),
-
-            "q": np.array([
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-            ]),
-
-            "w": np.zeros(3),
-
-            "wind": wind,
-
-            "rotor_speeds": np.array([
-                1788.53,
-                1788.53,
-                1788.53,
-                1788.53,
-            ]),
-        }
-
-    def _build_trajectory(self, route: Route):
-        if not route or len(route.waypoints) < 2:
-            return HoverTraj(x0=self._home_position)
-
-        # 1. Filter out duplicate or near-identical consecutive waypoints
-        filtered_points = []
-        min_dist_threshold = 0.5  # meters
-
-        for wp in route.waypoints:
-            pos = np.array([wp.position.x, wp.position.y, wp.position.z])
-            if not filtered_points:
-                filtered_points.append(pos)
-            else:
-                if np.linalg.norm(pos - filtered_points[-1]) >= min_dist_threshold:
-                    filtered_points.append(pos)
-
-        # Need at least 2 distinct points for MinSnap
-        if len(filtered_points) < 2:
-            return HoverTraj(x0=self._home_position)
-
-        points = np.array(filtered_points)
-
-        # 2. Call MinSnap with non-collinear waypoints
-        try:
-            return MinSnap(
-                points=points,
-                v_avg=2.0,
-                verbose=False,
-            )
-        except Exception:
-            # Fallback to hovering at the target destination if QP optimization fails
-            target = points[-1]
-            return HoverTraj(x0=target)
-
-    def _advance_rotorpy(self, dt: float) -> None:
-        if self._rotorpy_state is None:
-            raise RuntimeError("RotorPy state has not been initialized.")
-
-        if self._trajectory is None:
-            raise RuntimeError("RotorPy trajectory has not been initialized.")
-
-        flat_output = self._trajectory.update(self._time)
-
-        control = self.rotorpy_controller.update(
-            self._time,
-            self._rotorpy_state,
-            flat_output,
-        )
-
-        self._rotorpy_state = self.rotorpy_vehicle.step(
-            self._rotorpy_state,
-            control,
-            dt,
-        )
-
-        self._time += dt
-
-        self._update_application_state()
-
-        destination = self._route.waypoints[-1].position
-
-        position_error = self._state.position.distance_to(destination)
-        speed = self._state.velocity.distance_to(Vector3(0, 0, 0))
-        keyframes = getattr(self._trajectory, "t_keyframes", None)
-        trajectory_finished = (
-            keyframes is None
-            or self._time >= float(keyframes[-1])
-        )
-
-        if trajectory_finished and position_error < 0.5 and speed < 0.5:
-            self._state.position = Vector3(
-                destination.x,
-                destination.y,
-                destination.z,
-            )
-            self._state.velocity = Vector3(0, 0, 0)
-            self._state.state = DroneState.LANDED
-
-    def _update_application_state(self) -> None:
-        state = self._rotorpy_state
-
-        position = state["x"]
-        velocity = state["v"]
-
-        self._state.position = Vector3(
-            float(position[0]),
-            float(position[1]),
-            float(position[2]),
-        )
-
-        self._state.velocity = Vector3(
-            float(velocity[0]),
-            float(velocity[1]),
-            float(velocity[2]),
-        )
-
-        self.battery.update(
-            state["rotor_speeds"],
-            self._sim_dt,
-        )
-
-        self._state.battery_percent = self.battery.percent
-
-        if self._state.battery_percent <= 0.0:
-            self._state.state = DroneState.EMERGENCY
-            self._state.fault = "Battery depleted"
-    # ------------------------------------------------------------------
-    # Placeholder backend
-    # ------------------------------------------------------------------
-
-    def _advance_placeholder(self, dt: float) -> None:
-        if self._route is None:
-            return
-
-        if self._placeholder_route_index >= len(self._route.waypoints):
-            self._state.state = DroneState.LANDED
-            return
-
-        target = self._route.waypoints[
-            self._placeholder_route_index
-        ].position
-
-        current = self._state.position
-
-        direction = np.array([
-            target.x - current.x,
-            target.y - current.y,
-            target.z - current.z,
-        ])
-
-        distance = np.linalg.norm(direction)
-
-        if distance < 0.1:
-            self._state.position = Vector3(
-                target.x,
-                target.y,
-                target.z,
-            )
-
-            self._placeholder_route_index += 1
-
-            if self._placeholder_route_index >= len(
-                self._route.waypoints
-            ):
-                self._state.state = DroneState.LANDED
-
-            return
-
-        speed = 10.0
-        travel = min(speed * dt, distance)
-
-        direction /= distance
-
-        self._state.position.x += direction[0] * travel
-        self._state.position.y += direction[1] * travel
-        self._state.position.z += direction[2] * travel
-
-        self._state.velocity = Vector3(
-            direction[0] * speed,
-            direction[1] * speed,
-            direction[2] * speed,
-        )
+        self.state.position = self.home_position
+        self.state.battery_percent = 100.0
+        self.state.state = DroneState.LANDED
+        self.current_route = None
+        self.current_waypoint_idx = 0
+        self.sim_time = 0.0

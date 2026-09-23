@@ -1,2 +1,3 @@
 rotorpy
 pygame
+pytest

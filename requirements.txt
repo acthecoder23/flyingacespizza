@@ -1,3 +1,4 @@
 rotorpy
 pygame
 pytest
+pyinstaller

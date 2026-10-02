@@ -61,7 +61,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
             return
 
         # 1. Battery discharge during active flight
-        self.state.battery_percent -= 0.5 * dt
+        self.state.battery_percent -= 0.05 * dt
         if self.state.battery_percent <= 0:
             self.state.battery_percent = 0.0
             self.state.state = DroneState.EMERGENCY

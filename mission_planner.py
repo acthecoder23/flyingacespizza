@@ -12,9 +12,9 @@ class MissionPlanner:
         self.obstacle_margin = 2.0
 
         # Simple energy model used for feasibility checks (not physical flight dynamics).
-        self.energy_per_distance = 0.05      # base energy per meter
-        self.weight_penalty_factor = 0.02    # extra energy per meter per kg carried
-        self.wind_penalty_factor = 0.01      # extra energy per meter per m/s of wind
+        self.energy_per_distance = 0.01      # base energy per meter
+        self.weight_penalty_factor = 0.005    # extra energy per meter per kg carried
+        self.wind_penalty_factor = 0.001      # extra energy per meter per m/s of wind
         self.battery_reserve_margin = 0.85   # only spend this fraction of battery on a plan
 
     def plan_route(self, start: Vector3, destination: Vector3) -> Route:

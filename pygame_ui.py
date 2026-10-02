@@ -6,6 +6,7 @@ from camera import Camera
 from contracts import DeliveryOrder, MissionState, Vector3
 from editor import ScenarioEditor
 from order_spawner import OrderSpawner
+from map_module import MapData
 
 BG = (240, 240, 240)
 GRID = (215, 215, 215)
@@ -32,9 +33,17 @@ class PygameUI:
     def __init__(self, scenario_manager, mission_manager, simulation):
         pygame.init()
 
-        self.screen_size = (1150, 760)
-        self.screen = pygame.display.set_mode(self.screen_size)
-        pygame.display.set_caption("Pizza Drone Simulation")
+        # self.screen_size = (1150, 760)
+        # self.screen = pygame.display.set_mode(self.screen_size)
+        # pygame.display.set_caption("Pizza Drone Simulation")
+        display_info = pygame.display.Info()
+        self.screen = pygame.display.set_mode(
+            (display_info.current_w, display_info.current_h),
+            pygame.FULLSCREEN,
+        )
+
+        self.screen_size = self.screen.get_size()
+        pygame.display.set_caption("Flying Ace's Pizza Delivery")
 
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 22)
@@ -47,9 +56,12 @@ class PygameUI:
 
         self.auto_dispatch = True  # Auto-Dispatch enabled by default
 
+        self.map = MapData("maps/richmond_small_3.json")
+
         self.camera = Camera()
-        self.camera.fit(scenario_manager.get_scenario().bounds, self.screen_size)
-        self.editor = ScenarioEditor(scenario_manager, self.camera)
+        # self.camera.fit(scenario_manager.get_scenario().bounds, self.screen_size)
+        # self.editor = ScenarioEditor(scenario_manager, self.camera)
+        self.camera.fit(self.map.get_bounds(), self.screen_size)
 
         self.mode = "sim"  # "sim" or "edit"
         self.show_help = False
@@ -73,6 +85,10 @@ class PygameUI:
             if event.type == pygame.QUIT:
                 self.running = False
                 return False
+            
+            # Camera gets first opportunity to consume pan/zoom events.
+            if self.camera.handle_event(event):
+                continue
 
             # --- Left-click to place delivery on map ---
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -194,16 +210,19 @@ class PygameUI:
             self.mission_manager.update(dt)
 
     def render(self):
-        self.screen.fill(BG)
-        self.render_grid()
-        self.render_obstacles()
+        # self.screen.fill(BG)
+        # self.render_grid()
+        # self.render_obstacles()
+        self.map.render(self.screen, self.camera)
+
         self.render_deliveries()
         self.render_base()
         self.render_route()
         self.render_drone()
         self.render_wind()
-        if self.mode == "edit":
-            self.render_drag_preview()
+        
+        # if self.mode == "edit":
+            # self.render_drag_preview()
         self.render_toolbar()
         self.render_hud()
         if self.show_help:

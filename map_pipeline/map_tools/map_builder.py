@@ -32,13 +32,47 @@ def _local_transformer(lat: float, lon: float) -> tuple[str, Transformer]:
     return crs, Transformer.from_crs("EPSG:4326", crs, always_xy=True)
 
 
-def _xy_geometry(geom, project, origin_x: float, origin_y: float):
+# def _xy_geometry(geom, project, origin_x: float, origin_y: float):
+#     projected = transform(project, geom)
+#     return transform(lambda x, y, z=None: (x - origin_x, y - origin_y), projected)
+def _xy_geometry(
+    geom,
+    project,
+    origin_x: float,
+    origin_y: float,
+    simplify_tolerance: float = 0.0,
+):
     projected = transform(project, geom)
-    return transform(lambda x, y, z=None: (x - origin_x, y - origin_y), projected)
+    local = transform(
+        lambda x, y, z=None: (x - origin_x, y - origin_y),
+        projected,
+    )
 
+    if simplify_tolerance > 0:
+        local = local.simplify(
+            simplify_tolerance,
+            preserve_topology=True,
+        )
 
-def _coords_to_local(geom, project, origin_x: float, origin_y: float) -> dict[str, Any]:
-    local = _xy_geometry(geom, project, origin_x, origin_y)
+    return local
+
+# def _coords_to_local(geom, project, origin_x: float, origin_y: float) -> dict[str, Any]:
+#     local = _xy_geometry(geom, project, origin_x, origin_y)
+#     return mapping(local)
+def _coords_to_local(
+    geom,
+    project,
+    origin_x: float,
+    origin_y: float,
+    simplify_tolerance: float = 0.0,
+) -> dict[str, Any]:
+    local = _xy_geometry(
+        geom,
+        project,
+        origin_x,
+        origin_y,
+        simplify_tolerance,
+    )
     return mapping(local)
 
 
@@ -81,7 +115,7 @@ def _height(tags: dict[str, Any]) -> tuple[float, str]:
     return 10.0, "default_estimate"
 
 
-def _feature_record(row, project, ox0: float, oy0: float) -> dict[str, Any] | None:
+def _feature_record(row, project, ox0: float, oy0: float, simplify_tolerance: float = 0.0) -> dict[str, Any] | None:
     geom = row.geometry
     if geom is None or geom.is_empty:
         return None
@@ -89,7 +123,7 @@ def _feature_record(row, project, ox0: float, oy0: float) -> dict[str, Any] | No
     kind = _feature_type(tags)
     if kind == "other":
         return None
-    local = _xy_geometry(geom, project, ox0, oy0)
+    local = _xy_geometry(geom, project, ox0, oy0, simplify_tolerance)
     record = {
         "id": str(row.name),
         "kind": kind,
@@ -108,8 +142,7 @@ def _feature_record(row, project, ox0: float, oy0: float) -> dict[str, Any] | No
     return record
 
 
-def build_map(place: str, diameter_miles: float = 3.0, output: str = "map.json",
-              network_type: str = "drive") -> dict[str, Any]:
+def build_map(place: str, diameter_miles: float = 3.0, output: str = "map.json", network_type: str = "drive", simplify_tolerance: float = 0.0,) -> dict[str, Any]:
     """Build a square map centered on a geocoded place and write JSON."""
     if diameter_miles <= 0:
         raise ValueError("diameter_miles must be positive")
@@ -155,7 +188,7 @@ def build_map(place: str, diameter_miles: float = 3.0, output: str = "map.json",
     records = []
     for idx, row in features.iterrows():
         try:
-            rec = _feature_record(row, project, center_x, center_y)
+            rec = _feature_record(row, project, center_x, center_y, simplify_tolerance)
             if rec:
                 records.append(rec)
         except Exception:
@@ -174,7 +207,7 @@ def build_map(place: str, diameter_miles: float = 3.0, output: str = "map.json",
                 "name": str(row.get("name", "")) if row.get("name") is not None else "",
                 "oneway": str(row.get("oneway", "")),
             },
-            "geometry": _coords_to_local(geom, project, center_x, center_y),
+            "geometry": _coords_to_local(geom, project, center_x, center_y, simplify_tolerance),
         })
 
     # Local origin is the requested center; map coordinates can be negative.
@@ -192,6 +225,7 @@ def build_map(place: str, diameter_miles: float = 3.0, output: str = "map.json",
             "origin": "geocoded center",
             "units": "meters",
             "diameter_miles": diameter_miles,
+            "simplify_tolerance_m": simplify_tolerance,
             "bounds": [-radius, -radius, radius, radius],
             "network_type": network_type,
         },
@@ -215,6 +249,7 @@ def build_map_from_pbf(
     diameter_miles: float = 3.0,
     output: str = "map.json",
     network_type: str = "drive",
+    simplify_tolerance: float = 0.0,
 ) -> dict[str, Any]:
     """Build a simulator map from a local OSM PBF extract."""
     from pyrosm import OSM
@@ -279,7 +314,7 @@ def build_map_from_pbf(
         if geom is None or geom.is_empty:
             return None
 
-        local = _xy_geometry(geom, project, center_x, center_y)
+        local = _xy_geometry(geom, project, center_x, center_y, simplify_tolerance)
         clipped = local.intersection(clip_bounds)
 
         if clipped.is_empty:
@@ -422,6 +457,7 @@ def build_map_from_pbf(
             "origin": "geocoded center",
             "units": "meters",
             "diameter_miles": diameter_miles,
+            "simplify_tolerance_m": simplify_tolerance,
             "bounds": [-radius, -radius, radius, radius],
             "network_type": network_type,
             "source_file": pbf.name,
@@ -455,12 +491,18 @@ def main():
     parser.add_argument("--output", default="maps/map.json")
     parser.add_argument("--network-type", choices=["drive", "walk", "bike", "all", "all_public"], default="drive")
     parser.add_argument("--source", help="Path to a local OSM PBF file")
+    parser.add_argument(
+        "--simplify",
+        type=float,
+        default=0.0,
+        help="Simplify geometry by this many meters; 0 disables simplification.",
+    )
     args = parser.parse_args()
 
     if args.source:
-        build_map_from_pbf(args.source, args.place, args.diameter_miles, args.output, args.network_type)
+        build_map_from_pbf(args.source, args.place, args.diameter_miles, args.output, args.network_type, args.simplify)
     else:
-        build_map(args.place, args.diameter_miles, args.output, args.network_type)
+        build_map(args.place, args.diameter_miles, args.output, args.network_type, args.simplify)
 
 
 if __name__ == "__main__":

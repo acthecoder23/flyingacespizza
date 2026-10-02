@@ -18,7 +18,7 @@ from rotorpy.wind.default_winds import ConstantWind
 
 # Number of drones in the fleet. Each gets its own RotorPy vehicle/controller/
 # environment instance and a small offset from base so they don't overlap at start.
-FLEET_SIZE = 2
+FLEET_SIZE = 5
 
 PAYLOAD_CAPACITY = 3.0  # kg a single drone can carry per trip
 

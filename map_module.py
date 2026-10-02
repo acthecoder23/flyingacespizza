@@ -60,6 +60,12 @@ class MapData:
         self.bounds = self._normalize_bounds(self.metadata["bounds"])
         self.obstacles = self._load_obstacles()
 
+        # Cached static map image and the camera/viewport state used to draw it.
+        self._render_cache = None
+        self._cache_scale = None
+        self._cache_size = None
+        self._cache_offset = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -70,13 +76,40 @@ class MapData:
     def get_obstacles(self) -> list[Obstacle]:
         return list(self.obstacles)
 
-    def render(self, surface: pygame.Surface, camera):
-        """Render the complete map background using the simulator camera."""
-        surface.fill(BACKGROUND)
+    # def render(self, surface: pygame.Surface, camera):
+    #     """Render the complete map background using the simulator camera."""
+    #     surface.fill(BACKGROUND)
 
-        self._render_land(surface, camera)
-        self._render_roads(surface, camera)
-        self._render_buildings(surface, camera)
+    #     self._render_land(surface, camera)
+    #     self._render_roads(surface, camera)
+    #     self._render_buildings(surface, camera)
+    
+    def render(self, surface: pygame.Surface, camera):
+        """Render the cached static map background."""
+        size = surface.get_size()
+        scale = camera.scale
+        offset = tuple(camera.offset)
+
+        cache_invalid = (
+            self._render_cache is None
+            or self._cache_size != size
+            or self._cache_scale != scale
+            or self._cache_offset != offset
+        )
+
+        if cache_invalid:
+            self._render_cache = pygame.Surface(size)
+            self._render_cache.fill(BACKGROUND)
+
+            self._render_land(self._render_cache, camera)
+            self._render_roads(self._render_cache, camera)
+            self._render_buildings(self._render_cache, camera)
+
+            self._cache_size = size
+            self._cache_scale = scale
+            self._cache_offset = offset
+
+        surface.blit(self._render_cache, (0, 0))
 
     def render_land(self, surface: pygame.Surface, camera):
         self._render_land(surface, camera)

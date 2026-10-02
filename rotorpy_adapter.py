@@ -31,7 +31,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
 
         self.current_route: Route | None = None
         self.current_waypoint_idx: int = 0
-        self.cruise_speed: float = 5.0  # m/s
+        self.cruise_speed: float = 15.0  # m/s
 
     def set_battery(self, battery_percent: float) -> None:
         """Allows base station charging logic to update vehicle battery level."""

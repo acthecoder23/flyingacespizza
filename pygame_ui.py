@@ -1,5 +1,8 @@
 # pygame_ui.py
+from __future__ import annotations
+
 import math
+from typing import TYPE_CHECKING
 import pygame
 
 from camera import Camera
@@ -7,6 +10,12 @@ from contracts import DeliveryOrder, MissionState, Vector3
 from editor import ScenarioEditor
 from order_spawner import OrderSpawner
 from map_module import MapData
+
+if TYPE_CHECKING:
+    from scenario import ScenarioManager
+    from simulation import SimulationManager
+    from mission_manager import MissionManager
+
 
 BG = (240, 240, 240)
 GRID = (215, 215, 215)
@@ -30,7 +39,7 @@ DRONE_COLORS = [
 
 class PygameUI:
 
-    def __init__(self, scenario_manager, mission_manager, simulation):
+    def __init__(self, scenario_manager: ScenarioManager, mission_manager: MissionManager, simulation: SimulationManager, map_data: MapData):
         pygame.init()
 
         # self.screen_size = (1150, 760)
@@ -52,11 +61,17 @@ class PygameUI:
         self.scenario_manager = scenario_manager
         self.mission_manager = mission_manager
         self.simulation = simulation
-        self.spawner = OrderSpawner(interval_seconds=15.0)
-
+        self.spawner: OrderSpawner = OrderSpawner(scenario=self.scenario_manager.get_scenario(),
+                                    spawn_interval=10.0,
+                                    max_active_orders=10,
+                                    landing_clearance=2.0,
+                                    search_radius=100.0,
+                                    search_step=10.0,)
+        
         self.auto_dispatch = True  # Auto-Dispatch enabled by default
 
-        self.map = MapData("maps/richmond_small_3.json")
+        # self.map = MapData("maps/richmond_small_3.json")
+        self.map = map_data
 
         self.camera = Camera()
         # self.camera.fit(scenario_manager.get_scenario().bounds, self.screen_size)
@@ -204,7 +219,7 @@ class PygameUI:
 
     def update(self, dt: float):
         self.simulation.advance(dt)
-        self.spawner.update(dt, self.scenario_manager.get_scenario())
+        self.spawner.update(dt)
 
         if self.auto_dispatch:
             self.mission_manager.update(dt)

@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
+import math
 
 
 class MissionState(Enum):
@@ -85,19 +86,348 @@ class VehicleState:
     payload_capacity: float = 5.0  # kg a single trip can carry; used for delivery batching
 
 
-@dataclass
-class Obstacle:
-    position: Vector3
-    width: float
-    depth: float
-    height: float
+# @dataclass
+# class Obstacle:
+#     position: Vector3
+#     width: float
+#     depth: float
+#     height: float
 
-    def contains(self, point: Vector3, margin: float = 0.0) -> bool:
-        return (
-            abs(point.x - self.position.x) <= self.width / 2 + margin
-            and abs(point.y - self.position.y) <= self.depth / 2 + margin
-            and point.z <= self.height
+#     def contains(self, point: Vector3, margin: float = 0.0) -> bool:
+#         return (
+#             abs(point.x - self.position.x) <= self.width / 2 + margin
+#             and abs(point.y - self.position.y) <= self.depth / 2 + margin
+#             and point.z <= self.height
+#         )
+@dataclass(frozen=True)
+class Obstacle:
+    """Static polygonal obstacle in simulator world coordinates."""
+
+    polygons: tuple[tuple[tuple[float, float], ...], ...]
+    height: float = 0.0
+
+    @property
+    def bounds(self) -> tuple[float, float, float, float]:
+        points = [point for polygon in self.polygons for point in polygon]
+
+        if not points:
+            return 0.0, 0.0, 0.0, 0.0
+
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def contains_point(self, point: Vector3, margin: float = 0.0) -> bool:
+        """Return True if the point lies inside or near the obstacle footprint."""
+
+        xmin, ymin, xmax, ymax = self.bounds
+
+        if (
+            point.x < xmin - margin
+            or point.x > xmax + margin
+            or point.y < ymin - margin
+            or point.y > ymax + margin
+        ):
+            return False
+
+        return any(
+            self._point_in_polygon(point.x, point.y, polygon, margin)
+            for polygon in self.polygons
         )
+
+    def intersects_segment(
+        self,
+        a: Vector3,
+        b: Vector3,
+        margin: float = 0.0,
+    ) -> bool:
+        """Return True if a 3D segment intersects the obstacle."""
+
+        if min(a.z, b.z) > self.height:
+            return False
+
+        xmin, ymin, xmax, ymax = self.bounds
+
+        if (
+            max(a.x, b.x) < xmin - margin
+            or min(a.x, b.x) > xmax + margin
+            or max(a.y, b.y) < ymin - margin
+            or min(a.y, b.y) > ymax + margin
+        ):
+            return False
+
+        for polygon in self.polygons:
+            if self._segment_intersects_polygon(
+                a,
+                b,
+                polygon,
+                margin,
+            ):
+                return True
+
+        return False
+
+    def expanded_boundary_points(
+        self,
+        margin: float = 0.0,
+    ) -> list[tuple[float, float]]:
+        """Return obstacle boundary points suitable for routing nodes."""
+
+        if margin <= 0.0:
+            return [
+                point
+                for polygon in self.polygons
+                for point in polygon
+            ]
+
+        xmin, ymin, xmax, ymax = self.bounds
+
+        return [
+            (xmin - margin, ymin - margin),
+            (xmin - margin, ymax + margin),
+            (xmax + margin, ymin - margin),
+            (xmax + margin, ymax + margin),
+        ]
+
+    def routing_points(self, margin: float = 0.0) -> list[tuple[float, float]]:
+        """Return points around the obstacle suitable for routing nodes."""
+
+        points = []
+
+        for polygon in self.polygons:
+            for i, vertex in enumerate(polygon):
+                previous = polygon[i - 1]
+                following = polygon[(i + 1) % len(polygon)]
+
+                offset = self._vertex_offset(
+                    previous,
+                    vertex,
+                    following,
+                    margin,
+                )
+
+                points.append(
+                    (
+                        vertex[0] + offset[0],
+                        vertex[1] + offset[1],
+                    )
+                )
+
+        return points
+
+    @staticmethod
+    def _vertex_offset(previous, vertex, following, margin):
+        if margin <= 0.0:
+            return 0.0, 0.0
+
+        incoming = Obstacle._unit_vector(
+            previous,
+            vertex,
+        )
+        outgoing = Obstacle._unit_vector(
+            vertex,
+            following,
+        )
+
+        normal_in = (-incoming[1], incoming[0])
+        normal_out = (-outgoing[1], outgoing[0])
+
+        normal = (
+            normal_in[0] + normal_out[0],
+            normal_in[1] + normal_out[1],
+        )
+
+        length = math.hypot(normal[0], normal[1])
+
+        if length < 1e-9:
+            return normal_in[0] * margin, normal_in[1] * margin
+
+        return (
+            normal[0] / length * margin,
+            normal[1] / length * margin,
+        )
+
+
+    @staticmethod
+    def _unit_vector(a, b):
+        dx = b[0] - a[0]
+        dy = b[1] - a[1]
+
+        length = math.hypot(dx, dy)
+
+        if length < 1e-9:
+            return 0.0, 0.0
+
+        return dx / length, dy / length
+
+    @staticmethod
+    def _point_in_polygon(
+        x: float,
+        y: float,
+        polygon: tuple[tuple[float, float], ...],
+        margin: float,
+    ) -> bool:
+        if len(polygon) < 3:
+            return False
+
+        if margin > 0.0:
+            for i in range(len(polygon)):
+                a = polygon[i]
+                b = polygon[(i + 1) % len(polygon)]
+
+                if Obstacle._point_to_segment_distance(x, y, a, b) <= margin:
+                    return True
+
+        inside = False
+
+        j = len(polygon) - 1
+
+        for i in range(len(polygon)):
+            xi, yi = polygon[i]
+            xj, yj = polygon[j]
+
+            if (yi > y) != (yj > y):
+                intersection_x = (
+                    (xj - xi) * (y - yi) / (yj - yi) + xi
+                )
+
+                if x < intersection_x:
+                    inside = not inside
+
+            j = i
+
+        return inside
+
+    @staticmethod
+    def _segment_intersects_polygon(
+        a: Vector3,
+        b: Vector3,
+        polygon: tuple[tuple[float, float], ...],
+        margin: float,
+    ) -> bool:
+        if Obstacle._point_in_polygon(a.x, a.y, polygon, margin):
+            return True
+
+        if Obstacle._point_in_polygon(b.x, b.y, polygon, margin):
+            return True
+
+        for i in range(len(polygon)):
+            p1 = polygon[i]
+            p2 = polygon[(i + 1) % len(polygon)]
+
+            if Obstacle._segments_intersect(
+                (a.x, a.y),
+                (b.x, b.y),
+                p1,
+                p2,
+            ):
+                return True
+
+            if (
+                Obstacle._segment_to_segment_distance(
+                    (a.x, a.y),
+                    (b.x, b.y),
+                    p1,
+                    p2,
+                )
+                <= margin
+            ):
+                return True
+
+        return False
+
+    @staticmethod
+    def _segment_to_segment_distance(a, b, c, d) -> float:
+        if Obstacle._segments_intersect(a, b, c, d):
+            return 0.0
+
+        return min(
+            Obstacle._point_to_segment_distance(
+                a[0],
+                a[1],
+                c,
+                d,
+            ),
+            Obstacle._point_to_segment_distance(
+                b[0],
+                b[1],
+                c,
+                d,
+            ),
+            Obstacle._point_to_segment_distance(
+                c[0],
+                c[1],
+                a,
+                b,
+            ),
+            Obstacle._point_to_segment_distance(
+                d[0],
+                d[1],
+                a,
+                b,
+            ),
+        )
+
+    @staticmethod
+    def _segments_intersect(a, b, c, d) -> bool:
+        def orientation(p, q, r):
+            value = (
+                (q[1] - p[1]) * (r[0] - q[0])
+                - (q[0] - p[0]) * (r[1] - q[1])
+            )
+
+            if abs(value) < 1e-9:
+                return 0
+
+            return 1 if value > 0 else 2
+
+        def on_segment(p, q, r):
+            return (
+                min(p[0], r[0]) <= q[0] <= max(p[0], r[0])
+                and min(p[1], r[1]) <= q[1] <= max(p[1], r[1])
+            )
+
+        o1 = orientation(a, b, c)
+        o2 = orientation(a, b, d)
+        o3 = orientation(c, d, a)
+        o4 = orientation(c, d, b)
+
+        if o1 != o2 and o3 != o4:
+            return True
+
+        if o1 == 0 and on_segment(a, c, b):
+            return True
+
+        if o2 == 0 and on_segment(a, d, b):
+            return True
+
+        if o3 == 0 and on_segment(c, a, d):
+            return True
+
+        if o4 == 0 and on_segment(c, b, d):
+            return True
+
+        return False
+
+    @staticmethod
+    def _point_to_segment_distance(x, y, a, b) -> float:
+        dx = b[0] - a[0]
+        dy = b[1] - a[1]
+
+        if dx == 0.0 and dy == 0.0:
+            return math.hypot(x - a[0], y - a[1])
+
+        t = (
+            (x - a[0]) * dx + (y - a[1]) * dy
+        ) / (dx * dx + dy * dy)
+
+        t = max(0.0, min(1.0, t))
+
+        closest_x = a[0] + t * dx
+        closest_y = a[1] + t * dy
+
+        return math.hypot(x - closest_x, y - closest_y)
 
 
 @dataclass

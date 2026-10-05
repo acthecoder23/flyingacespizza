@@ -158,6 +158,10 @@ env.bak/
 venv.bak/
 .vscode/
 
+#maps
+**/*.osm.pbf
+map_pipeline/cache/
+
 # Spyder project settings
 .spyderproject
 .spyproject

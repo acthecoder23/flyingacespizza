@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pygame
 
+from contracts import Obstacle
+
 
 COLORS = {
     "building": (190, 184, 170),
@@ -21,22 +23,22 @@ BACKGROUND = (242, 240, 232)
 BUILDING_OUTLINE = (125, 120, 110)
 
 
-@dataclass(frozen=True)
-class Obstacle:
-    """Static obstacle geometry in simulator world coordinates."""
+# @dataclass(frozen=True)
+# class Obstacle:
+#     """Static obstacle geometry in simulator world coordinates."""
 
-    polygons: tuple[tuple[tuple[float, float], ...], ...]
-    height: float = 0.0
+#     polygons: tuple[tuple[tuple[float, float], ...], ...]
+#     height: float = 0.0
 
-    @property
-    def bounds(self):
-        points = [point for polygon in self.polygons for point in polygon]
-        if not points:
-            return 0.0, 0.0, 0.0, 0.0
+#     @property
+#     def bounds(self):
+#         points = [point for polygon in self.polygons for point in polygon]
+#         if not points:
+#             return 0.0, 0.0, 0.0, 0.0
 
-        xs = [point[0] for point in points]
-        ys = [point[1] for point in points]
-        return min(xs), min(ys), max(xs), max(ys)
+#         xs = [point[0] for point in points]
+#         ys = [point[1] for point in points]
+#         return min(xs), min(ys), max(xs), max(ys)
 
 
 class MapData:

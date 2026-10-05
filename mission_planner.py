@@ -39,57 +39,63 @@ class MissionPlanner:
 
         return True
 
+    # def segment_is_clear(self, a: Vector3, b: Vector3) -> bool:
+    #     for obstacle in self.environment.get_obstacles():
+    #         if min(a.z, b.z) > obstacle.height:
+    #             continue
+
+    #         if self.segment_intersects_obstacle(a, b, obstacle):
+    #             return False
+
+    #     return True
     def segment_is_clear(self, a: Vector3, b: Vector3) -> bool:
         for obstacle in self.environment.get_obstacles():
-            if min(a.z, b.z) > obstacle.height:
-                continue
-
-            if self.segment_intersects_obstacle(a, b, obstacle):
+            if obstacle.intersects_segment(a, b, margin=self.obstacle_margin):
                 return False
 
         return True
 
-    def segment_intersects_obstacle(
-        self,
-        a: Vector3,
-        b: Vector3,
-        obstacle: Obstacle,
-    ) -> bool:
-        margin = self.obstacle_margin
+    # def segment_intersects_obstacle(
+    #     self,
+    #     a: Vector3,
+    #     b: Vector3,
+    #     obstacle: Obstacle,
+    # ) -> bool:
+    #     margin = self.obstacle_margin
 
-        xmin = obstacle.position.x - obstacle.width / 2 - margin
-        xmax = obstacle.position.x + obstacle.width / 2 + margin
-        ymin = obstacle.position.y - obstacle.depth / 2 - margin
-        ymax = obstacle.position.y + obstacle.depth / 2 + margin
+    #     xmin = obstacle.position.x - obstacle.width / 2 - margin
+    #     xmax = obstacle.position.x + obstacle.width / 2 + margin
+    #     ymin = obstacle.position.y - obstacle.depth / 2 - margin
+    #     ymax = obstacle.position.y + obstacle.depth / 2 + margin
 
-        dx = b.x - a.x
-        dy = b.y - a.y
+    #     dx = b.x - a.x
+    #     dy = b.y - a.y
 
-        t_min = 0.0
-        t_max = 1.0
+    #     t_min = 0.0
+    #     t_max = 1.0
 
-        for p, d, lower, upper in (
-            (a.x, dx, xmin, xmax),
-            (a.y, dy, ymin, ymax),
-        ):
-            if abs(d) < 1e-9:
-                if p < lower or p > upper:
-                    return False
-                continue
+    #     for p, d, lower, upper in (
+    #         (a.x, dx, xmin, xmax),
+    #         (a.y, dy, ymin, ymax),
+    #     ):
+    #         if abs(d) < 1e-9:
+    #             if p < lower or p > upper:
+    #                 return False
+    #             continue
 
-            t1 = (lower - p) / d
-            t2 = (upper - p) / d
+    #         t1 = (lower - p) / d
+    #         t2 = (upper - p) / d
 
-            if t1 > t2:
-                t1, t2 = t2, t1
+    #         if t1 > t2:
+    #             t1, t2 = t2, t1
 
-            t_min = max(t_min, t1)
-            t_max = min(t_max, t2)
+    #         t_min = max(t_min, t1)
+    #         t_max = min(t_max, t2)
 
-            if t_min > t_max:
-                return False
+    #         if t_min > t_max:
+    #             return False
 
-        return True
+    #     return True
 
     def plan_around_obstacles(
         self,
@@ -136,38 +142,11 @@ class MissionPlanner:
             Vector3(destination.x, destination.y, destination.z),
         ]
 
+        z = max(start.z, destination.z)
+
         for obstacle in relevant_obstacles:
-            margin = self.obstacle_margin
-
-            xmin = (
-                obstacle.position.x
-                - obstacle.width / 2
-                - margin
-            )
-            xmax = (
-                obstacle.position.x
-                + obstacle.width / 2
-                + margin
-            )
-            ymin = (
-                obstacle.position.y
-                - obstacle.depth / 2
-                - margin
-            )
-            ymax = (
-                obstacle.position.y
-                + obstacle.depth / 2
-                + margin
-            )
-
-            z = max(start.z, destination.z)
-
-            nodes.extend([
-                Vector3(xmin, ymin, z),
-                Vector3(xmin, ymax, z),
-                Vector3(xmax, ymin, z),
-                Vector3(xmax, ymax, z),
-            ])
+            for x, y in obstacle.routing_points(self.obstacle_margin):
+                nodes.append(Vector3(x, y, z))
 
         path = self._shortest_visible_path(nodes)
 

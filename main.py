@@ -20,7 +20,7 @@ from rotorpy.wind.default_winds import ConstantWind
 # environment instance and a small offset from base so they don't overlap at start.
 FLEET_SIZE = 5
 
-PAYLOAD_CAPACITY = 3.0  # kg a single drone can carry per trip
+PAYLOAD_CAPACITY = 5.0  # kg a single drone can carry per trip
 
 
 def build_vehicle(home_position: Vector3, wind: Wind) -> RotorPyVehicleAdapter:
@@ -55,8 +55,8 @@ def build_vehicle(home_position: Vector3, wind: Wind) -> RotorPyVehicleAdapter:
 
 def build_application():
 
-    map_data = MapData("maps/richmond_small_3.json")
-    map_bounds = map_data.get_bounds()
+    map = MapData("maps/richmond_small_3.json")
+    map_bounds = map.get_bounds()
 
     x0, y0, x1, y1 = map_bounds
 
@@ -70,10 +70,7 @@ def build_application():
         bounds=map_bounds,
         base=base,
         wind=Wind(Vector3(2.0, 0.0, 0.0)),
-        obstacles=[
-            # Obstacle(Vector3(15, 10, 0), 4, 4, 5),
-            # Obstacle(Vector3(25, 20, 0), 3, 6, 4),
-        ],
+        obstacles=map.get_obstacles(),
         orders=[
             # DeliveryOrder(id="order-001", destination=Vector3(35, 25, 2), priority=1, payload_weight=1.2),
             # DeliveryOrder(id="order-002", destination=Vector3(32, 8, 2), priority=1, payload_weight=1.0),
@@ -111,6 +108,7 @@ def build_application():
         scenario_manager=environment,
         mission_manager=mission_manager,
         simulation=simulation,
+        map_data=map,
     )
 
     return ui

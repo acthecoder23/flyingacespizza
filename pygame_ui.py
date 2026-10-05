@@ -397,7 +397,7 @@ class PygameUI:
             batch = f"{len(mission.active_orders)} deliver(ies)" if mission.active_orders else "-"
             text = (
                 f"{mission.id}: {mission.state.value:<10} "
-                f"batt {state.battery_percent:5.1f}%   batch {batch}"
+                f"batt {state.battery.remaining_percent():5.1f}%   batch {batch}"
             )
             y = panel.y + 30 + i * row_h
             pygame.draw.circle(self.screen, color, (24, y + 8), 5)

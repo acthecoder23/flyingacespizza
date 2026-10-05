@@ -12,9 +12,9 @@ class MissionPlanner:
         self.obstacle_margin = 2.0
 
         # Simple energy model used for feasibility checks (not physical flight dynamics).
-        self.energy_per_distance = 0.01      # base energy per meter
-        self.weight_penalty_factor = 0.005    # extra energy per meter per kg carried
-        self.wind_penalty_factor = 0.001      # extra energy per meter per m/s of wind
+        # self.energy_per_distance = 0.01      # base energy per meter
+        # self.weight_penalty_factor = 0.005    # extra energy per meter per kg carried
+        # self.wind_penalty_factor = 0.001      # extra energy per meter per m/s of wind
         self.battery_reserve_margin = 0.85   # only spend this fraction of battery on a plan
 
     def plan_route(self, start: Vector3, destination: Vector3) -> Route:
@@ -39,63 +39,12 @@ class MissionPlanner:
 
         return True
 
-    # def segment_is_clear(self, a: Vector3, b: Vector3) -> bool:
-    #     for obstacle in self.environment.get_obstacles():
-    #         if min(a.z, b.z) > obstacle.height:
-    #             continue
-
-    #         if self.segment_intersects_obstacle(a, b, obstacle):
-    #             return False
-
-    #     return True
     def segment_is_clear(self, a: Vector3, b: Vector3) -> bool:
         for obstacle in self.environment.get_obstacles():
             if obstacle.intersects_segment(a, b, margin=self.obstacle_margin):
                 return False
 
         return True
-
-    # def segment_intersects_obstacle(
-    #     self,
-    #     a: Vector3,
-    #     b: Vector3,
-    #     obstacle: Obstacle,
-    # ) -> bool:
-    #     margin = self.obstacle_margin
-
-    #     xmin = obstacle.position.x - obstacle.width / 2 - margin
-    #     xmax = obstacle.position.x + obstacle.width / 2 + margin
-    #     ymin = obstacle.position.y - obstacle.depth / 2 - margin
-    #     ymax = obstacle.position.y + obstacle.depth / 2 + margin
-
-    #     dx = b.x - a.x
-    #     dy = b.y - a.y
-
-    #     t_min = 0.0
-    #     t_max = 1.0
-
-    #     for p, d, lower, upper in (
-    #         (a.x, dx, xmin, xmax),
-    #         (a.y, dy, ymin, ymax),
-    #     ):
-    #         if abs(d) < 1e-9:
-    #             if p < lower or p > upper:
-    #                 return False
-    #             continue
-
-    #         t1 = (lower - p) / d
-    #         t2 = (upper - p) / d
-
-    #         if t1 > t2:
-    #             t1, t2 = t2, t1
-
-    #         t_min = max(t_min, t1)
-    #         t_max = min(t_max, t2)
-
-    #         if t_min > t_max:
-    #             return False
-
-    #     return True
 
     def plan_around_obstacles(
         self,
@@ -253,32 +202,43 @@ class MissionPlanner:
 
         return result
 
-    def leg_energy(self, distance: float, weight: float, wind: Wind) -> float:
-        base = distance * self.energy_per_distance
-        weight_penalty = distance * weight * self.weight_penalty_factor
-        wind_penalty = wind.speed * distance * self.wind_penalty_factor
-        return base + weight_penalty + wind_penalty
+    # def leg_energy(self, distance: float, weight: float, wind: Wind) -> float:
+    #     base = distance * self.energy_per_distance
+    #     weight_penalty = distance * weight * self.weight_penalty_factor
+    #     wind_penalty = wind.speed * distance * self.wind_penalty_factor
+    #     return base + weight_penalty + wind_penalty
 
-    def estimate_energy(
-        self,
-        route: Route,
-        vehicle: VehicleState,
-    ) -> float:
-        """Single-route estimate assuming no payload (kept for backward compatibility)."""
+    # def estimate_energy(
+    #     self,
+    #     route: Route,
+    #     vehicle: VehicleState,
+    # ) -> float:
+    #     """Single-route estimate assuming no payload (kept for backward compatibility)."""
+    #     wind = self.environment.get_wind()
+    #     return self.leg_energy(route.distance, 0.0, wind)
+
+    def estimate_energy(self, route: Route, vehicle: VehicleState) -> float:
+        """Estimate energy required for a route assuming no payload."""
+
         wind = self.environment.get_wind()
-        return self.leg_energy(route.distance, 0.0, wind)
 
-    def route_feasible(
-        self,
-        route: Route,
-        vehicle: VehicleState,
-    ) -> bool:
-        energy_required = self.estimate_energy(
-            route,
-            vehicle,
+        return vehicle.battery.estimate_energy(
+            distance=route.distance,
+            payload_weight=0.0,
+            wind=wind,
+            cruise_speed=vehicle.cruise_speed,
         )
 
-        return energy_required < vehicle.battery_percent * self.battery_reserve_margin
+    def route_feasible(self, route: Route, vehicle: VehicleState) -> bool:
+        energy_required = self.estimate_energy(route, vehicle,)
+
+        # return energy_required < vehicle.battery_percent * self.battery_reserve_margin
+        available_energy = (
+            vehicle.battery.remaining_energy()
+            * self.battery_reserve_margin
+        )
+
+        return energy_required < available_energy
 
     # ------------------------------------------------------------------
     # Multi-delivery support
@@ -296,23 +256,55 @@ class MissionPlanner:
 
         return Route(waypoints)
 
+
+    # def estimate_multi_stop_energy(
+    #     self,
+    #     start: Vector3,
+    #     stops_with_weights: list[tuple[Vector3, float]],
+    # ) -> float:
+    #     """
+    #     Energy for start -> stop1 -> stop2 -> ... Each entry's weight is the payload
+    #     still on board *while flying that leg* (i.e. already excluding anything
+    #     dropped off on an earlier leg).
+    #     """
+    #     wind = self.environment.get_wind()
+    #     position = start
+    #     total = 0.0
+
+    #     for stop, weight_on_leg in stops_with_weights:
+    #         leg = self.plan_route(position, stop)
+    #         total += self._estimate_leg_energy(
+    #             battery=vehicle_battery,
+    #             distance=leg.distance,
+    #             payload_weight=weight_on_leg,
+    #             wind=wind,
+    #             cruise_speed=cruise_speed,
+    #         )
+            
+    #         position = stop
+
+    #     return total
+
     def estimate_multi_stop_energy(
         self,
         start: Vector3,
         stops_with_weights: list[tuple[Vector3, float]],
+        vehicle: VehicleState,
     ) -> float:
-        """
-        Energy for start -> stop1 -> stop2 -> ... Each entry's weight is the payload
-        still on board *while flying that leg* (i.e. already excluding anything
-        dropped off on an earlier leg).
-        """
         wind = self.environment.get_wind()
         position = start
         total = 0.0
 
         for stop, weight_on_leg in stops_with_weights:
             leg = self.plan_route(position, stop)
-            total += self.leg_energy(leg.distance, weight_on_leg, wind)
+
+            total += vehicle.battery.estimate_energy(
+                distance=leg.distance,
+                payload_weight=weight_on_leg,
+                wind=wind,
+                cruise_speed=vehicle.cruise_speed,
+            )
+
             position = stop
 
         return total
@@ -340,12 +332,12 @@ class MissionPlanner:
             
             try:
                 energy = self.estimate_multi_stop_energy(
-                    vehicle_state.position, stops_with_weights
+                    vehicle_state.position, stops_with_weights, vehicle_state
                 )
             except RuntimeError:
                 continue
 
-            if energy <= vehicle_state.battery_percent * self.battery_reserve_margin:
+            if energy <= vehicle_state.battery.remaining_energy() * self.battery_reserve_margin:
                 batch.append(candidate)
                 total_weight += candidate.payload_weight
 

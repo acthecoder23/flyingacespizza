@@ -1,6 +1,9 @@
 # rotorpy_adapter.py
 import numpy as np
-from contracts import VehicleInterface, VehicleState, DroneState, Route, Vector3
+# from rotorpy import wind
+from contracts import VehicleInterface, VehicleState, DroneState, Route, Vector3, Wind
+from battery import Battery
+from drone_config import DroneConfig
 
 
 class RotorPyVehicleAdapter(VehicleInterface):
@@ -13,29 +16,35 @@ class RotorPyVehicleAdapter(VehicleInterface):
         rotorpy_vehicle,
         rotorpy_environment,
         rotorpy_controller,
+        config: DroneConfig,
         home_position: Vector3 = Vector3(0, 0, 0),
-        payload_capacity: float = 5.0,
+        battery: Battery | None = None,
+        wind: Wind | None = None,
     ):
         self.vehicle = rotorpy_vehicle
         self.environment = rotorpy_environment
         self.controller = rotorpy_controller
+        self.config = config
         self.home_position = home_position
         self.sim_time = 0.0
+        self.wind = wind if wind is not None else Wind(velocity=Vector3(0, 0, 0))
+
+        if battery is None:
+            raise ValueError("RotorPyVehicleAdapter requires a Battery.")
 
         self.state = VehicleState(
             position=home_position,
-            battery_percent=100.0,
+            battery=battery,
+            name=config.name,
             state=DroneState.LANDED,
-            payload_capacity=payload_capacity,
+            payload_capacity=config.payload_capacity,
+            cruise_speed=config.cruise_speed,
         )
 
         self.current_route: Route | None = None
         self.current_waypoint_idx: int = 0
-        self.cruise_speed: float = 15.0  # m/s
 
-    def set_battery(self, battery_percent: float) -> None:
-        """Allows base station charging logic to update vehicle battery level."""
-        self.state.battery_percent = max(0.0, min(100.0, battery_percent))
+        # self.cruise_speed = config.cruise_speed
 
     def get_state(self) -> VehicleState:
         return self.state
@@ -61,12 +70,17 @@ class RotorPyVehicleAdapter(VehicleInterface):
             return
 
         # 1. Battery discharge during active flight
-        self.state.battery_percent -= 0.05 * dt
-        if self.state.battery_percent <= 0:
-            self.state.battery_percent = 0.0
+        self.state.battery.discharge(
+            dt=dt,
+            payload_weight=self.state.payload_weight,
+            wind=self.wind,
+            cruise_speed=self.config.cruise_speed,
+        )
+
+        if self.state.battery.is_empty():
             self.state.state = DroneState.EMERGENCY
             return
-
+        
         # 2. Check route completion to prevent drift / runaway physics integration
         if not self.current_route or self.current_waypoint_idx >= len(self.current_route.waypoints):
             self.state.state = DroneState.HOVERING
@@ -75,7 +89,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
         # 3. Target tracking logic
         target = self.current_route.waypoints[self.current_waypoint_idx].position
         dist = self.state.position.distance_to(target)
-        step = self.cruise_speed * dt
+        step = self.config.cruise_speed * dt
 
         if dist <= step:
             # Reached waypoint
@@ -117,8 +131,10 @@ class RotorPyVehicleAdapter(VehicleInterface):
 
     def reset(self) -> None:
         self.state.position = self.home_position
-        self.state.battery_percent = 100.0
+        self.state.battery.reset()
         self.state.state = DroneState.LANDED
+        self.state.payload_loaded = False
+        self.state.payload_weight = 0.0
         self.current_route = None
         self.current_waypoint_idx = 0
         self.sim_time = 0.0

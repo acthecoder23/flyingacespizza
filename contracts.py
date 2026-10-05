@@ -7,6 +7,8 @@ from enum import Enum
 from typing import Optional
 import math
 
+from battery import Battery
+
 
 class MissionState(Enum):
     IDLE = "idle"
@@ -74,31 +76,33 @@ class Route:
         return len(self.waypoints)
 
 
+# @dataclass
+# class VehicleState:
+#     position: Vector3
+#     velocity: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
+#     battery: Battery
+#     state: DroneState = DroneState.LANDED
+#     payload_loaded: bool = False
+#     payload_weight: float = 0.0
+#     connected: bool = True
+#     fault: Optional[str] = None
+#     payload_capacity: float = 5.0
+#     cruise_speed: float = 15.0
 @dataclass
 class VehicleState:
     position: Vector3
+    battery: Battery
+    name: str = "drone"
     velocity: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
-    battery_percent: float = 100.0
     state: DroneState = DroneState.LANDED
     payload_loaded: bool = False
+    payload_weight: float = 0.0
     connected: bool = True
     fault: Optional[str] = None
-    payload_capacity: float = 5.0  # kg a single trip can carry; used for delivery batching
+    payload_capacity: float = 5.0
+    cruise_speed: float = 15.0
 
 
-# @dataclass
-# class Obstacle:
-#     position: Vector3
-#     width: float
-#     depth: float
-#     height: float
-
-#     def contains(self, point: Vector3, margin: float = 0.0) -> bool:
-#         return (
-#             abs(point.x - self.position.x) <= self.width / 2 + margin
-#             and abs(point.y - self.position.y) <= self.depth / 2 + margin
-#             and point.z <= self.height
-#         )
 @dataclass(frozen=True)
 class Obstacle:
     """Static polygonal obstacle in simulator world coordinates."""
@@ -437,24 +441,6 @@ class Wind:
     @property
     def speed(self) -> float:
         return self.velocity.distance_to(Vector3(0, 0, 0))
-
-
-# @dataclass
-# class DeliveryPoint:
-#     id: str
-#     position: Vector3
-#     priority: int = 0
-
-
-# @dataclass
-# class Scenario:
-#     bounds: tuple[float, float, float, float]
-#     obstacles: list[Obstacle] = field(default_factory=list)
-#     wind: Wind = field(default_factory=Wind)
-#     delivery_points: list[DeliveryPoint] = field(default_factory=list)
-#     base: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
-#     drone_start_battery: float = 100.0
-# contracts.py
 
 @dataclass
 class DeliveryOrder:

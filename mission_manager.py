@@ -20,10 +20,20 @@ class MissionManager:
         if isinstance(vehicles, VehicleInterface):
             vehicles = [vehicles]
 
-        self.missions: list[DroneMission] = [
-            DroneMission(id=f"drone-{i + 1}", vehicle=v)
-            for i, v in enumerate(vehicles)
-        ]
+        name_counts = {}
+        self.missions = []
+        
+        for vehicle in vehicles:
+            name = vehicle.get_state().name
+            name_counts[name] = name_counts.get(name, 0) + 1
+
+            self.missions.append(
+                DroneMission(
+                    id=f"{name}-{name_counts[name]}",
+                    vehicle=vehicle,
+                )
+            )
+
         self.environment = environment
         self.planner = planner
         
@@ -106,64 +116,20 @@ class MissionManager:
         mission.state = MissionState.EXECUTING
         return True
 
-    # def update(self, dt: float = 0.1):
-    #     scenario_base = self.environment.get_scenario().base
-
-    #     # 1. Update active flight states & delivery progress
-    #     for mission in self.missions:
-    #         self._update_mission(mission)
-
-    #     # 2. Recharging logic
-    #     for mission in self.missions:
-    #         v_state = mission.vehicle.get_state()
-    #         at_base = v_state.position.distance_to(scenario_base) <= 2.5
-
-    #         if mission.state in (MissionState.IDLE, MissionState.COMPLETE):
-    #             if v_state.battery_percent < 30.0 and at_base:
-    #                 mission.state = MissionState.RECHARGING
-
-    #         elif mission.state == MissionState.RECHARGING:
-    #             if not at_base:
-    #                 mission.state = MissionState.IDLE
-    #                 continue
-
-    #             # Scale battery charge rate (+15% / second)
-    #             new_battery = min(100.0, v_state.battery_percent + 15.0 * dt)
-                
-    #             # Directly write to vehicle adapter
-    #             if hasattr(mission.vehicle, "set_battery"):
-    #                 mission.vehicle.set_battery(new_battery)
-    #             else:
-    #                 v_state.battery_percent = new_battery
-
-    #             if new_battery >= 99.9:
-    #                 mission.state = MissionState.IDLE
-
-    #     # 3. Auto-Dispatch & Auto-Start Mission
-    #     if self.pending_orders:
-    #         for mission in self.missions:
-    #             v_state = mission.vehicle.get_state()
-    #             at_base = v_state.position.distance_to(scenario_base) <= 2.5
-                
-    #             if mission.state == MissionState.IDLE and v_state.battery_percent >= 30.0 and at_base:
-    #                 route = self.plan_next_mission(mission.id)
-    #                 if route and mission.state == MissionState.READY:
-    #                     # AUTO-START mission instantly without manual intervention
-    #                     self.start_next_mission(mission.id)
     def update(self, dt: float = 0.1):
         scenario_base = self.environment.get_scenario().base
 
-        # 1. Update active flight states & delivery progress
+        # 1. Update active flight states and delivery progress.
         for mission in self.missions:
             self._update_mission(mission)
 
-        # 2. Base Recharging logic
+        # 2. Base/recharging logic.
         for mission in self.missions:
             v_state = mission.vehicle.get_state()
             at_base = v_state.position.distance_to(scenario_base) <= 2.5
 
             if mission.state in (MissionState.IDLE, MissionState.COMPLETE):
-                if v_state.battery_percent < 30.0 and at_base:
+                if v_state.battery.remaining_percent() < 30.0 and at_base:
                     mission.state = MissionState.RECHARGING
 
             elif mission.state == MissionState.RECHARGING:
@@ -171,36 +137,49 @@ class MissionManager:
                     mission.state = MissionState.IDLE
                     continue
 
-                new_battery = min(100.0, v_state.battery_percent + 15.0 * dt)
-                if hasattr(mission.vehicle, "set_battery"):
-                    mission.vehicle.set_battery(new_battery)
-                else:
-                    v_state.battery_percent = new_battery
+                v_state.battery.recharge(dt)
 
-                if new_battery >= 99.9:
+                if v_state.battery.is_full():
                     mission.state = MissionState.IDLE
 
-        # 3. Robust Auto-Dispatch
-        if self.pending_orders:
-            for mission in self.missions:
-                v_state = mission.vehicle.get_state()
-                at_base = v_state.position.distance_to(scenario_base) <= 2.5
+        # 3. Automatically assign and start missions.
+        self._auto_dispatch()
 
-                if mission.state == MissionState.IDLE and v_state.battery_percent >= 30.0 and at_base:
-                    # Attempt to plan mission
-                    route = self.plan_next_mission(mission.id)
 
-                    if route and mission.state == MissionState.READY:
-                        # Success: Auto-start mission
-                        self.start_next_mission(mission.id)
-                    elif route is None:
-                        # Routing failed: Identify current order & handle failure
-                        if mission.active_orders:
-                            failed_order = mission.active_orders[0]
-                            failed_order.status = "unfeasible"
-                            print(f"[MissionManager] Unfeasible route for order {failed_order.id}. Skipping.")
-                            mission.active_orders.clear()
-                            mission.state = MissionState.IDLE
+    def _auto_dispatch(self):
+        if not self.pending_orders:
+            return
+
+        scenario_base = self.environment.get_scenario().base
+
+        for mission in self.missions:
+            if not self.pending_orders:
+                break
+
+            if mission.state not in (MissionState.IDLE, MissionState.COMPLETE):
+                continue
+
+            vehicle_state = mission.vehicle.get_state()
+
+            at_base = (
+                vehicle_state.position.distance_to(scenario_base) <= 2.5
+            )
+
+            if not at_base:
+                continue
+
+            if vehicle_state.battery.remaining_percent() < 30.0:
+                continue
+
+            route = self.plan_next_mission(mission.id)
+
+            if route is None:
+                continue
+
+            if mission.state != MissionState.READY:
+                continue
+
+            self.start_next_mission(mission.id)
 
     def _update_mission(self, mission: DroneMission):
         state = mission.vehicle.get_state()
@@ -210,7 +189,7 @@ class MissionManager:
             return
 
         if mission.state in (MissionState.EXECUTING, MissionState.RETURNING):
-            if state.battery_percent < 15.0:
+            if state.battery.remaining_percent() < 15.0:
                 self.abort_mission(mission.id)
                 return
 

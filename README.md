@@ -4,6 +4,18 @@ A UAV delivery simulation for experimenting with autonomous drone fleet operatio
 
 The simulator models a fleet of delivery drones operating from a common base. Orders are generated over time or created interactively, grouped into missions, assigned to available drones, and flown through a simulated environment using [RotorPy](https://github.com/ethz-asl/rotorpy).
 
+## Setup
+
+1. Clone the repo
+2. Install Python 3.13 or newer
+3. Setup virtual environment. `python -m venv venv`
+4. Activate the venv with `venv/Scripts/activate` or linux equivalent.
+5. Install dependencies. `pip install -r requirements.txt`
+6. Run the simulator. `python main.py scenario.json`
+7. For headless runs, `python main.py scenario.json --headless [--duration <seconds> | --missions <int> | --output PATH]`
+
+Note that duration is seconds of simulated time.
+
 ## Current Features
 
 * Multi-drone fleet simulation

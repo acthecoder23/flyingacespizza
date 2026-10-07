@@ -138,8 +138,8 @@ class PygameUI:
         mods = event.mod
 
         if key == pygame.K_TAB:
-            self.mode = "edit" if self.mode == "sim" else "sim"
-            self.log(f"Switched to {self.mode.upper()} mode")
+            # self.mode = "edit" if self.mode == "sim" else "sim"
+            # self.log(f"Switched to {self.mode.upper()} mode")
             return
 
         if key == pygame.K_h:
@@ -363,11 +363,12 @@ class PygameUI:
         self.screen.blit(mode_label, (10, 6))
 
         if self.mode == "edit":
-            tools_text = "  ".join(
-                f"({i + 1}){t}" if t != self.editor.tool else f"[{i + 1}:{t.upper()}]"
-                for i, t in enumerate(self.editor.TOOLS)
-            )
-            text = f"{tools_text}   height={self.editor.default_obstacle_height:.0f}m (+/-)"
+            pass
+            # tools_text = "  ".join(
+            #     f"({i + 1}){t}" if t != self.editor.tool else f"[{i + 1}:{t.upper()}]"
+            #     for i, t in enumerate(self.editor.TOOLS)
+            # )
+            # text = f"{tools_text}   height={self.editor.default_obstacle_height:.0f}m (+/-)"
         else:
             auto_str = "AUTO" if self.auto_dispatch else "MANUAL"
             text = (

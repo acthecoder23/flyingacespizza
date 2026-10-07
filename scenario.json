@@ -1,110 +1,35 @@
 {
-  "bounds": [
-    0,
-    0,
-    40,
-    30
-  ],
-  "obstacles": [
-    {
-      "position": {
-        "x": 15,
-        "y": 10,
-        "z": 0
-      },
-      "width": 4,
-      "depth": 4,
-      "height": 5
-    },
-    {
-      "position": {
-        "x": 25,
-        "y": 20,
-        "z": 0
-      },
-      "width": 3,
-      "depth": 6,
-      "height": 4
-    },
-    {
-      "position": {
-        "x": 22.86290322580645,
-        "y": 7.814516129032258,
-        "z": 0.0
-      },
-      "width": 4.4999999999999964,
-      "depth": 6.822580645161289,
-      "height": 10.0
-    },
-    {
-      "position": {
-        "x": 9.362903225806452,
-        "y": 21.096774193548384,
-        "z": 0.0
-      },
-      "width": 5.274193548387097,
-      "depth": 5.322580645161292,
-      "height": 16.0
-    }
-  ],
+  "seed": 41872,
+  "map": "maps/richmond_small_3.json",
   "wind": {
-    "velocity": {
-      "x": 0.6774193548387117,
-      "y": -1.161290322580645,
-      "z": 0.0
-    }
+    "x": 2.0,
+    "y": 0.0,
+    "z": 0.0
   },
-  "delivery_points": [
-    {
-      "id": "pizza-1",
-      "position": {
-        "x": 35,
-        "y": 25,
-        "z": 2
-      },
-      "priority": 0
-    },
-    {
-      "id": "pizza-2",
-      "position": {
-        "x": 32,
-        "y": 8,
-        "z": 2
-      },
-      "priority": 0
-    },
-    {
-      "id": "pizza-3",
-      "position": {
-        "x": 20,
-        "y": 27,
-        "z": 2
-      },
-      "priority": 0
-    },
-    {
-      "id": "pizza-4",
-      "position": {
-        "x": 19.5,
-        "y": 25.887096774193548,
-        "z": 2.0
-      },
-      "priority": 0
-    },
-    {
-      "id": "pizza-5",
-      "position": {
-        "x": 34.983870967741936,
-        "y": 23.46774193548387,
-        "z": 2.0
-      },
-      "priority": 0
-    }
-  ],
-  "base": {
-    "x": 34.64516129032258,
-    "y": 13.209677419354838,
-    "z": 2
+  "fleet": {
+    "configs": [
+      "Light",
+      "Standard",
+      "Heavy",
+      "Fast",
+      "Endurance"
+    ]
   },
-  "drone_start_battery": 100.0
+  "orders": [],
+  "spawning": {
+    "type": "interval",
+    "interval": 15.0,
+    "max_active_orders": 15
+  },
+  "telemetry": {
+    "enabled": true,
+    "output": "telemetry.json",
+    "state_interval": 5.0,
+    "events": true,
+    "state": true,
+    "vehicles": true,
+    "orders": true,
+    "missions": true,
+    "battery": true
+  }
 }

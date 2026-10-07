@@ -13,7 +13,7 @@ class MissionManager:
 
     def __init__(
         self,
-        vehicles,  # VehicleInterface or list[VehicleInterface]
+        vehicles,
         environment: EnvironmentInterface,
         planner: MissionPlanner,
     ):
@@ -22,15 +22,18 @@ class MissionManager:
 
         name_counts = {}
         self.missions = []
-        
+        self.completed_missions = []
+        self.time = 0.0
+
         for vehicle in vehicles:
             name = vehicle.get_state().name
             name_counts[name] = name_counts.get(name, 0) + 1
 
             self.missions.append(
                 DroneMission(
-                    id=f"{name}-{name_counts[name]}",
+                    id=f"mission-{len(self.missions) + 1}",
                     vehicle=vehicle,
+                    created_at=0.0,
                 )
             )
 
@@ -94,6 +97,13 @@ class MissionManager:
         for order in batch:
             order.status = "dispatched"
 
+        mission.mission_number += 1
+        mission.assigned_at = self.time
+        mission.completed_at = None
+        mission.failed_at = None
+        mission.orders_fulfilled = 0
+        mission.current_waypoint = 0
+        
         mission.active_orders = batch
         mission.active_route = route
         mission.vehicle.upload_route(route)
@@ -116,7 +126,10 @@ class MissionManager:
         mission.state = MissionState.EXECUTING
         return True
 
-    def update(self, dt: float = 0.1):
+    def update(self, dt: float = 0.1, time: float | None = None):
+        if time is not None:
+            self.time = time
+
         scenario_base = self.environment.get_scenario().base
 
         # 1. Update active flight states and delivery progress.
@@ -184,6 +197,8 @@ class MissionManager:
     def _update_mission(self, mission: DroneMission):
         state = mission.vehicle.get_state()
 
+        mission.current_waypoint = getattr(mission.vehicle, "current_waypoint_idx", None)
+            
         if state.fault:
             self.abort_mission(mission.id)
             return
@@ -199,8 +214,10 @@ class MissionManager:
                     dist = state.position.distance_to(order.destination)
                     if dist < 10.0 and order.status == "dispatched":
                         order.status = "in_progress"
-                    if dist < 2.5:
+                    if dist < 2.5 and order.status != "delivered":
                         order.status = "delivered"
+                        order.completed_at = self.time
+                        mission.orders_fulfilled += 1
 
             # Auto Return-to-Base after deliveries
             if mission.active_orders and all(o.status == "delivered" for o in mission.active_orders):
@@ -215,23 +232,25 @@ class MissionManager:
         if not mission:
             return
 
-        scenario = self.environment.get_scenario()
-        scenario.orders = [o for o in scenario.orders if o.status != "delivered"]
+        mission.completed_at = self.time
+        mission.state = MissionState.COMPLETE
+        self._archive_mission(mission)
 
         mission.active_orders = []
         mission.active_route = None
-        mission.state = MissionState.COMPLETE
+
+    def _archive_mission(self, mission: DroneMission):
+        self.completed_missions.append(mission.to_dict())
 
     def abort_mission(self, mission_id: str | None = None):
         mission = self._mission_by_id(mission_id) or self.missions[0]
         if not mission:
             return
 
-        scenario = self.environment.get_scenario()
-        scenario.orders = [o for o in scenario.orders if o.status != "delivered"]
-
         mission.vehicle.abort_mission()
+        mission.failed_at = self.time
         mission.state = MissionState.FAILED
+        self._archive_mission(mission)
 
         for order in mission.active_orders:
             if order.status in ("dispatched", "in_progress"):
@@ -253,9 +272,17 @@ class MissionManager:
             mission.active_orders = []
             mission.active_route = None
             mission.state = MissionState.IDLE
+            mission.assigned_at = None
+            mission.completed_at = None
+            mission.failed_at = None
+            mission.orders_fulfilled = 0
+            mission.current_waypoint = None
             mission.vehicle.reset()
+
         for order in self.orders:
             order.status = "pending"
+            order.completed_at = None
+            order.failed_at = None
 
     @property
     def state(self) -> MissionState:

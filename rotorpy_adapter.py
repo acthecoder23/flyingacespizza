@@ -17,6 +17,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
         rotorpy_environment,
         rotorpy_controller,
         config: DroneConfig,
+        vehicle_id: str,
         home_position: Vector3 = Vector3(0, 0, 0),
         battery: Battery | None = None,
         wind: Wind | None = None,
@@ -25,6 +26,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
         self.environment = rotorpy_environment
         self.controller = rotorpy_controller
         self.config = config
+        self._vehicle_id = vehicle_id
         self.home_position = home_position
         self.sim_time = 0.0
         self.wind = wind if wind is not None else Wind(velocity=Vector3(0, 0, 0))
@@ -45,6 +47,10 @@ class RotorPyVehicleAdapter(VehicleInterface):
         self.current_waypoint_idx: int = 0
 
         # self.cruise_speed = config.cruise_speed
+
+    @property
+    def id(self) -> str:
+        return self._vehicle_id
 
     def get_state(self) -> VehicleState:
         return self.state
@@ -67,6 +73,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
 
     def advance(self, dt: float) -> None:
         if self.state.state not in (DroneState.FLYING, DroneState.RETURNING):
+            self.state.velocity = Vector3(0, 0, 0)
             return
 
         # 1. Battery discharge during active flight
@@ -78,6 +85,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
         )
 
         if self.state.battery.is_empty():
+            self.state.velocity = Vector3(0, 0, 0)
             self.state.state = DroneState.EMERGENCY
             return
         
@@ -94,6 +102,7 @@ class RotorPyVehicleAdapter(VehicleInterface):
         if dist <= step:
             # Reached waypoint
             self.state.position = target
+            self.state.velocity = Vector3(0, 0, 0)
             self.current_waypoint_idx += 1
 
             if self.current_waypoint_idx >= len(self.current_route.waypoints):
@@ -105,7 +114,9 @@ class RotorPyVehicleAdapter(VehicleInterface):
                 (target.y - self.state.position.y) / dist,
                 (target.z - self.state.position.z) / dist,
             )
-            self.state.position = self.state.position + direction * step
+
+            self.state.velocity = direction * self.config.cruise_speed
+            self.state.position = self.state.position + self.state.velocity * dt
 
         # 4. Advance underlying RotorPy physics engine safely
         self.sim_time += dt
@@ -138,3 +149,39 @@ class RotorPyVehicleAdapter(VehicleInterface):
         self.current_route = None
         self.current_waypoint_idx = 0
         self.sim_time = 0.0
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "name": self.config.name,
+            "type": self.config.name,
+            "specs": {
+                "cruise_speed": self.config.cruise_speed,
+                "payload_capacity": self.config.payload_capacity,
+                "rotor_speed": self.config.rotor_speed,
+                "battery_capacity_wh": self.config.battery_capacity_wh,
+            },
+        }
+
+    def sample(self, time: float) -> dict:
+        return {
+            "time": time,
+            "position": {
+                "x": self.state.position.x,
+                "y": self.state.position.y,
+                "z": self.state.position.z,
+            },
+            "velocity": {
+                "x": self.state.velocity.x,
+                "y": self.state.velocity.y,
+                "z": self.state.velocity.z,
+            },
+            "battery": {
+                "remaining_wh": self.state.battery.remaining_energy(),
+                "capacity_wh": self.state.battery.capacity_wh,
+                "remaining_percent": self.state.battery.remaining_percent(),
+            },
+            "payload_weight": self.state.payload_weight,
+            "state": self.state.state.value,
+            "fault": self.state.fault,
+        }

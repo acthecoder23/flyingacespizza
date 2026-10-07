@@ -8,13 +8,12 @@ import pygame
 from camera import Camera
 from contracts import DeliveryOrder, MissionState, Vector3
 from editor import ScenarioEditor
-from order_spawner import OrderSpawner
 from map_module import MapData
 
 if TYPE_CHECKING:
     from scenario import ScenarioManager
-    from simulation import SimulationManager
     from mission_manager import MissionManager
+    from simulation import Simulation
 
 
 BG = (240, 240, 240)
@@ -39,16 +38,16 @@ DRONE_COLORS = [
 
 class PygameUI:
 
-    def __init__(self, scenario_manager: ScenarioManager, mission_manager: MissionManager, simulation: SimulationManager, map_data: MapData):
+    def __init__(self, scenario_manager: ScenarioManager, mission_manager: MissionManager, simulation: Simulation):
         pygame.init()
 
         # self.screen_size = (1150, 760)
         # self.screen = pygame.display.set_mode(self.screen_size)
         # pygame.display.set_caption("Pizza Drone Simulation")
-        display_info = pygame.display.Info()
+        # display_info = pygame.display.Info()
         self.screen = pygame.display.set_mode(
-            (display_info.current_w, display_info.current_h),
-            pygame.FULLSCREEN,
+            (1150, 760),
+            pygame.RESIZABLE,
         )
 
         self.screen_size = self.screen.get_size()
@@ -61,17 +60,18 @@ class PygameUI:
         self.scenario_manager = scenario_manager
         self.mission_manager = mission_manager
         self.simulation = simulation
-        self.spawner: OrderSpawner = OrderSpawner(scenario=self.scenario_manager.get_scenario(),
-                                    spawn_interval=10.0,
-                                    max_active_orders=10,
-                                    landing_clearance=2.0,
-                                    search_radius=100.0,
-                                    search_step=10.0,)
-        
+        # self.spawner: OrderSpawner = OrderSpawner(scenario=self.scenario_manager.get_scenario(),
+        #                             spawn_interval=10.0,
+        #                             max_active_orders=10,
+        #                             landing_clearance=2.0,
+        #                             search_radius=100.0,
+        #                             search_step=10.0,)
+        self.spawner = simulation.order_spawner
+
         self.auto_dispatch = True  # Auto-Dispatch enabled by default
 
         # self.map = MapData("maps/richmond_small_3.json")
-        self.map = map_data
+        self.map = simulation.map
 
         self.camera = Camera()
         # self.camera.fit(scenario_manager.get_scenario().bounds, self.screen_size)
@@ -84,12 +84,15 @@ class PygameUI:
         self.messages: list[str] = []
 
     def run(self):
-        while self.running:
-            dt = self.clock.tick(60) / 1000.0
-            self.handle_events()
-            self.update(dt)
-            self.render()
-        pygame.quit()
+        try:
+            while self.running:
+                dt = self.clock.tick(60) / 1000.0
+                self.handle_events()
+                self.update(dt)
+                self.render()
+        finally:
+            self.simulation.stop()
+            pygame.quit()
 
     def log(self, text: str):
         self.messages.append(text)
@@ -121,7 +124,7 @@ class PygameUI:
                             payload_weight=1.5,
                             priority=1,
                         )
-                        scenario.orders.append(new_order)
+                        self.simulation.add_order(new_order)
                         self.log(f"Placed order at ({world_pos.x:.1f}, {world_pos.y:.1f})")
 
             # --- Keybinds ---
@@ -145,7 +148,8 @@ class PygameUI:
 
         # Toggle Auto-Dispatch with 'A'
         if key == pygame.K_a:
-            self.auto_dispatch = not self.auto_dispatch
+            self.simulation.auto_dispatch = not self.auto_dispatch
+            self.auto_dispatch = self.simulation.auto_dispatch
             self.log(f"Auto-Dispatch: {'ON' if self.auto_dispatch else 'OFF'}")
             return
 
@@ -219,10 +223,10 @@ class PygameUI:
 
     def update(self, dt: float):
         self.simulation.advance(dt)
-        self.spawner.update(dt)
+        # self.spawner.update(dt)
 
-        if self.auto_dispatch:
-            self.mission_manager.update(dt)
+        # if self.auto_dispatch:
+        #     self.mission_manager.update(dt)
 
     def render(self):
         # self.screen.fill(BG)

@@ -75,19 +75,6 @@ class Route:
     def __len__(self):
         return len(self.waypoints)
 
-
-# @dataclass
-# class VehicleState:
-#     position: Vector3
-#     velocity: Vector3 = field(default_factory=lambda: Vector3(0, 0, 0))
-#     battery: Battery
-#     state: DroneState = DroneState.LANDED
-#     payload_loaded: bool = False
-#     payload_weight: float = 0.0
-#     connected: bool = True
-#     fault: Optional[str] = None
-#     payload_capacity: float = 5.0
-#     cruise_speed: float = 15.0
 @dataclass
 class VehicleState:
     position: Vector3
@@ -442,14 +429,40 @@ class Wind:
     def speed(self) -> float:
         return self.velocity.distance_to(Vector3(0, 0, 0))
 
+# @dataclass
+# class DeliveryOrder:
+#     id: str
+#     destination: Vector3
+#     priority: int = 0
+#     payload_weight: float = 1.0  # default weight for editor-placed orders
+#     status: str = "pending"      # "pending", "assigned", "in_progress", "delivered"
+
 @dataclass
 class DeliveryOrder:
     id: str
     destination: Vector3
     priority: int = 0
-    payload_weight: float = 1.0  # default weight for editor-placed orders
-    status: str = "pending"      # "pending", "assigned", "in_progress", "delivered"
+    payload_weight: float = 1.0
+    status: str = "pending"
+    created_at: float = 0.0
+    completed_at: Optional[float] = None
+    failed_at: Optional[float] = None
 
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "destination": {
+                "x": self.destination.x,
+                "y": self.destination.y,
+                "z": self.destination.z,
+            },
+            "priority": self.priority,
+            "payload_weight": self.payload_weight,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "failed_at": self.failed_at,
+            "status": self.status,
+        }
 
 @dataclass
 class Scenario:
@@ -474,26 +487,60 @@ class SimulationSnapshot:
 
 
 # @dataclass
-# class DeliveryOrder:
+# class DroneMission:
+#     """Tracks one drone's current assignment within a fleet."""
 #     id: str
-#     destination: Vector3
-#     priority: int = 0
-#     payload_weight: float = 0.0
-#     status: str = "pending"
-
+#     vehicle: "VehicleInterface"
+#     state: MissionState = MissionState.IDLE
+#     active_orders: list[DeliveryOrder] = field(default_factory=list)
+#     active_route: Optional[Route] = None
 
 @dataclass
 class DroneMission:
-    """Tracks one drone's current assignment within a fleet."""
     id: str
     vehicle: "VehicleInterface"
     state: MissionState = MissionState.IDLE
     active_orders: list[DeliveryOrder] = field(default_factory=list)
     active_route: Optional[Route] = None
+    created_at: float = 0.0
+    assigned_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    failed_at: Optional[float] = None
+    orders_fulfilled: int = 0
+    current_waypoint: Optional[int] = None
+    mission_number: int = 0  # Added to track the mission number for each drone
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "mission_number": self.mission_number,
+            "created_at": self.created_at,
+            "assigned_at": self.assigned_at,
+            "completed_at": self.completed_at,
+            "failed_at": self.failed_at,
+            "status": self.state.value,
+            "vehicle_id": self.vehicle.id,
+            "order_ids": [order.id for order in self.active_orders],
+            "route": [
+                {
+                    "x": waypoint.position.x,
+                    "y": waypoint.position.y,
+                    "z": waypoint.position.z,
+                }
+                for waypoint in self.active_route.waypoints
+            ] if self.active_route else [],
+            "orders_fulfilled": self.orders_fulfilled,
+            "current_waypoint": self.current_waypoint,
+        }
 
 
 class VehicleInterface(ABC):
 
+    @property
+    @abstractmethod
+    def id(self) -> str:
+        ...
+        
     @abstractmethod
     def get_state(self) -> VehicleState:
         ...
@@ -526,6 +573,13 @@ class VehicleInterface(ABC):
     def reset(self) -> None:
         ...
 
+    @abstractmethod
+    def to_dict(self) -> dict:
+        ...
+
+    @abstractmethod
+    def sample(self, time: float) -> dict:
+        ...
 
 class EnvironmentInterface(ABC):
 

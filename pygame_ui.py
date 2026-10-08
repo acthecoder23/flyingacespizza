@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import pygame
 
 from camera import Camera
-from contracts import DeliveryOrder, MissionState, Vector3
+from contracts import DeliveryOrder, DroneMission, MissionState, Vector3
 from editor import ScenarioEditor
 from map_module import MapData
 
@@ -385,7 +385,7 @@ class PygameUI:
 
     def render_hud(self):
         vehicle_states = self.simulation.get_snapshot().vehicles
-        missions = self.mission_manager.missions
+        missions: list[DroneMission] = self.mission_manager.missions
 
         row_h = 20
         height = 34 + row_h * len(missions)
@@ -401,7 +401,7 @@ class PygameUI:
             color = DRONE_COLORS[i % len(DRONE_COLORS)]
             batch = f"{len(mission.active_orders)} deliver(ies)" if mission.active_orders else "-"
             text = (
-                f"{mission.id}: {mission.state.value:<10} "
+                f"{mission.vehicle.id}: {mission.state.value:<10} "
                 f"batt {state.battery.remaining_percent():5.1f}%   batch {batch}"
             )
             y = panel.y + 30 + i * row_h
